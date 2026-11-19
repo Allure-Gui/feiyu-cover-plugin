@@ -1,0 +1,11 @@
+[plugin]
+enabled = true
+config_version = "0.1.0"
+
+[cover]
+api_base = "http://127.0.0.1:9881"
+api_key = ""
+cooldown_seconds = 600
+poll_interval = 10
+max_wait_seconds = 1800
+notify_progress = true

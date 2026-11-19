@@ -1,0 +1,90 @@
+{
+  "schema_version": 2,
+  "required_capabilities": [
+    "custom_pages"
+  ],
+  "pages": [
+    {
+      "id": "studio",
+      "title": "鲸歌",
+      "description": "音色工作室：调参、试听与发送",
+      "placement": "sidebar",
+      "icon": "settings",
+      "mode": "custom",
+      "entry": "webui/index.html",
+      "layout": "viewport",
+      "queries": {
+        "state": {
+          "api": "jingge_state"
+        },
+        "sessions": {
+          "api": "jingge_sessions",
+          "parameters": {
+            "platform": {
+              "type": "string",
+              "max_length": 40
+            }
+          }
+        },
+        "job": {
+          "api": "jingge_job",
+          "parameters": {
+            "job_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 64
+            }
+          }
+        },
+        "models": {
+          "api": "jingge_models"
+        }
+      },
+      "actions": {
+        "save": {
+          "api": "jingge_save",
+          "parameters": {
+            "payload": {
+              "type": "string",
+              "required": true,
+              "max_length": 65536
+            }
+          }
+        },
+        "render": {
+          "api": "jingge_render",
+          "parameters": {
+            "payload": {
+              "type": "string",
+              "required": true,
+              "max_length": 4096
+            }
+          }
+        },
+        "send": {
+          "api": "jingge_send",
+          "parameters": {
+            "job_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 64
+            },
+            "stream_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 200
+            },
+            "group_id": {
+              "type": "string",
+              "max_length": 64
+            },
+            "user_id": {
+              "type": "string",
+              "max_length": 64
+            }
+          }
+        }
+      }
+    }
+  ]
+}
