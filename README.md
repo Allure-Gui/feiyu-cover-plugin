@@ -2,7 +2,7 @@
 
 > 群里说一句想听的歌，让麦麦用指定音色唱出来，成品以语音条直接发到群里。
 
-底层依赖一个本地翻唱 API（RVC 换声 + Demucs 人声分离），本插件只负责「接单 → 排队 → 收成品 → 发送」。API 服务见 [feiyu-cover-api](https://github.com/Allure-Gui/feiyu-cover-api)。
+底层依赖一个翻唱 API（RVC 换声 + Demucs 人声分离），可部署在**本机**，也可连接**远程服务器**上的实例；本插件只负责「接单 → 排队 → 收成品 → 发送」。API 服务见 [feiyu-cover-api](https://github.com/Allure-Gui/feiyu-cover-api)。
 
 ---
 
@@ -55,7 +55,9 @@ git clone https://github.com/Allure-Gui/feiyu-cover-plugin.git feiyu_cover
 
 - 麦麦宿主 SDK ≥ 2.13.0
 - Python 包：`httpx`（由 manifest 声明，宿主自动安装）
-- **本地翻唱 API**（默认 `http://127.0.0.1:9881`）—— 本仓库不含该服务，需另行部署 [feiyu-cover-api](https://github.com/Allure-Gui/feiyu-cover-api)
+- **翻唱 API**（本地或远程二选一）—— 本仓库不含该服务，需另行部署 [feiyu-cover-api](https://github.com/Allure-Gui/feiyu-cover-api)
+  - **本地**：部署在同一台机器的 WSL / Linux 上（默认 `http://127.0.0.1:9881`），延迟低、无需公网
+  - **远程**：部署在另一台有显卡的服务器上，插件通过 `api_base` 连过去；适合本机没显卡、或多人共用一套音色
 
 API 需提供这些接口：
 
@@ -77,8 +79,8 @@ GET  /jobs/{id}/audio            完整成品音频
 | 配置项 | 默认值 | 说明 |
 |---|---|---|
 | `enabled` | `true` | 总开关 |
-| `api_base` | `http://127.0.0.1:9881` | 本地翻唱 API 地址 |
-| `api_key` | 空 | 与 API 端 `config.json` 的 `api_key` 一致，没设就留空 |
+| `api_base` | `http://127.0.0.1:9881` | 翻唱 API 地址，本地填 `127.0.0.1`，远程填服务器地址（如 `http://192.168.1.10:9881` 或 `https://your-domain.com`） |
+| `api_key` | 空 | 与 API 端 `config.json` 的 `api_key` 一致，没设就留空；**远程部署强烈建议设置** |
 | `cooldown_seconds` | `600` | 同一用户两次点歌的最短间隔 |
 | `poll_interval` | `10` | 轮询进度间隔（秒） |
 | `max_wait_seconds` | `1800` | 单任务最长等待 |
@@ -86,6 +88,25 @@ GET  /jobs/{id}/audio            完整成品音频
 | `bot_name` | 空 | 回复里的自称；留空自动取机器人昵称 |
 
 > `config.toml` 已在 `.gitignore` 中，不会被提交到仓库。
+
+### 本地还是远程？
+
+| | 本地 API | 远程 API |
+|---|---|---|
+| 部署位置 | 麦麦同一台机器的 WSL / Linux | 另一台有 NVIDIA 显卡的服务器 |
+| `api_base` | `http://127.0.0.1:9881` | `http://服务器IP:9881` 或 `https://域名` |
+| 适合场景 | 家里有显卡、单人用 | 本机没显卡、多台麦麦共用、想随时可用 |
+| 网络要求 | 无 | 麦麦所在机器能访问服务器 9881 端口 |
+| 延迟 | 最低 | 取决于网络，生成本身要几十秒，延迟影响不大 |
+
+远程部署要点：
+
+1. 在服务器上按 [feiyu-cover-api](https://github.com/Allure-Gui/feiyu-cover-api) 文档部署并启动，确保 `0.0.0.0:9881` 可访问
+2. 在 API 端 `config.json` 设置一个 `api_key`，插件端 `config.toml` 填同样的值（插件会以 Bearer 方式带上）
+3. 用防火墙只放行可信来源；若要走公网，建议套一层反向代理 + HTTPS
+4. 把插件的 `api_base` 改成服务器地址，重启麦麦即可
+
+> 远程模式下，翻唱在服务器上跑，模型也放在服务器；插件和麦麦所在机器不需要显卡。
 
 ---
 
