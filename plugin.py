@@ -152,6 +152,7 @@ class FeiyuCoverPlugin(MaiBotPlugin):
         self._state_file: Path | None = None
         self._http: httpx.AsyncClient | None = None
         self._started_flag: Path | None = None  # 标记「服务由本插件拉起」的文件
+        self._starting: bool = False  # 是否正在自动拉起服务（供 WebUI 显示状态）
 
     def _flag_path(self) -> Path | None:
         if self._started_flag is None:
@@ -191,6 +192,7 @@ class FeiyuCoverPlugin(MaiBotPlugin):
         cmd = (self.config.cover.api_start_cmd or "").strip()
         if not cmd:
             return False, "未配置启动命令"
+        self._starting = True
         try:
             # 用 shell 执行整条命令（用户填的是完整命令行），不等待其结束
             proc = await asyncio.create_subprocess_shell(
@@ -202,6 +204,7 @@ class FeiyuCoverPlugin(MaiBotPlugin):
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(proc.wait(), timeout=10.0)
         except Exception as exc:  # noqa: BLE001
+            self._starting = False
             return False, f"启动命令执行失败：{exc}"
 
         # 等 API 就绪，最多 30 秒，每 2 秒探一次
@@ -212,8 +215,10 @@ class FeiyuCoverPlugin(MaiBotPlugin):
                 if flag:
                     with contextlib.suppress(OSError):
                         flag.write_text(str(time.time()), encoding="utf-8")
+                self._starting = False
                 return True, "服务已自动启动"
             await asyncio.sleep(2.0)
+        self._starting = False
         return False, "启动命令已执行，但服务在 30 秒内未就绪"
 
     async def _stop_api(self) -> str:
@@ -342,7 +347,11 @@ class FeiyuCoverPlugin(MaiBotPlugin):
     async def jingge_state(self) -> dict[str, Any]:
         ok = await self._health_ok()
         if ok:
-            health = {"ok": True, "message": "服务在线"}
+            health = {"ok": True, "starting": False, "message": "服务在线"}
+        elif self._starting:
+            # 正在自动拉起：给一个明确的缓冲提示，前端用黄色脉冲点显示
+            health = {"ok": False, "starting": True,
+                      "message": "服务正在拉起中，请稍候…"}
         else:
             # 页面查询是只读的，不触发自动拉起；给出可操作提示
             if self.config.cover.auto_start_api and (self.config.cover.api_start_cmd or "").strip():
@@ -351,7 +360,7 @@ class FeiyuCoverPlugin(MaiBotPlugin):
                 tip = "服务离线；请部署 API，或在配置里填写启动命令并开启自动拉起"
             else:
                 tip = "服务离线；请在配置里开启「自动拉起服务」"
-            health = {"ok": False, "message": tip}
+            health = {"ok": False, "starting": False, "message": tip}
         return {
             "voice": self._load_voice(),
             "defaults": dict(VOICE_DEFAULTS),

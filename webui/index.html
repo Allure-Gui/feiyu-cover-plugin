@@ -40,6 +40,9 @@
   .status.ok .dot{background:var(--blue)}
   .status.bad{color:var(--warn);background:#fdf3ea;border-color:#f6e0cc}
   .status.bad .dot{background:var(--warn)}
+  .status.starting{color:#8a6d1f;background:#fdf7e3;border-color:#f0e2b0}
+  .status.starting .dot{background:#d8a825;animation:pulse 1.2s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 
   nav{display:flex;gap:6px;padding:0 22px;background:var(--card);
     border-bottom:1px solid var(--line);flex:0 0 auto}
@@ -286,7 +289,7 @@
   };
 
   var S = { live:{}, draft:{}, limits:{}, models:[], f0:[], apiBase:"",
-            jobId:"", jobTitle:"", timer:null };
+            jobId:"", jobTitle:"", timer:null, healthTimer:null };
 
   function toast(msg, bad){
     var el = $("#toast"); el.textContent = msg;
@@ -479,6 +482,26 @@
       .catch(function(e){ toast("保存失败：" + (e.message||e), true); });
   }
 
+  // 健康状态显示：ok 蓝 / starting 黄色脉冲 / bad 橙
+  function paintHealth(h){
+    var cls = "status " + (h.ok ? "ok" : (h.starting ? "starting" : "bad"));
+    $("#health").className = cls;
+    $("#healthText").textContent = h.message;
+    // 未在线时每 2 秒刷新一次，直到在线或拉起失败，让「拉起中→在线」自动变化
+    if(!h.ok && typeof maibot !== "undefined"){
+      if(S.healthTimer) clearInterval(S.healthTimer);
+      S.healthTimer = setInterval(function(){
+        maibot.query("state").then(function(st2){
+          var h2 = st2.health || {ok:false, message:"未知"};
+          paintHealth(h2);
+        }).catch(function(){});
+      }, 2000);
+    } else if(S.healthTimer){
+      clearInterval(S.healthTimer);
+      S.healthTimer = null;
+    }
+  }
+
   function init(){
     if(typeof maibot === "undefined"){
       $("#routeParams").innerHTML = '<div class="empty">请在麦麦 WebUI 中打开此页面</div>';
@@ -491,9 +514,7 @@
       S.limits = st.limits || {};
       S.f0 = st.f0_methods || [];
       S.apiBase = st.api_base || "";
-      var h = st.health || {ok:false, message:"未知"};
-      $("#health").className = "status " + (h.ok ? "ok" : "bad");
-      $("#healthText").textContent = h.message;
+      paintHealth(st.health || {ok:false, message:"未知"});
       return maibot.query("models").catch(function(){ return {}; });
     }).then(function(m){
       S.models = (m && m.models) || [];
