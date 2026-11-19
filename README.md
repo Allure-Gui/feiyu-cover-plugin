@@ -22,7 +22,23 @@
 | **本地 API** | 于麦麦所在机器（WSL / Linux）部署 [feiyu-cover-api](https://github.com/Allure-Gui/feiyu-cover-api) | 本机配有 NVIDIA 显卡 |
 | **远程 API** | 将 API 部署于配有显卡的服务器，插件通过 `api_base` 连接 | 本机无显卡 / 多实例共用 |
 
-> 若未部署 API 服务，点歌将返回「翻唱服务没响应」。请先参照 [API 仓库文档](https://github.com/Allure-Gui/feiyu-cover-api) 完成服务部署。
+> 若未部署 API 服务，点歌将返回明确的「翻唱服务连接不可用」提示，不会静默失败。请先参照 [API 仓库文档](https://github.com/Allure-Gui/feiyu-cover-api) 完成服务部署。
+
+### 自动拉起服务（可选）
+
+若希望点歌时插件自动启动 API（无需手动开服务），可在 `config.toml` 的 `[cover]` 段配置：
+
+```toml
+auto_start_api = true
+api_start_cmd = "wsl.exe -d Ubuntu-24.04 -- bash /mnt/g/feiyu-cover/install/start-api.wsl.sh"
+```
+
+- `auto_start_api`：开启后，服务离线时插件会执行启动命令并等待就绪（最多 30 秒）
+- `api_start_cmd`：启动命令，按你自己的环境填写；**留空则不会自动拉起**，只给出连接不可用提示
+- 命令由你自己填写并以当前用户权限执行，等价于你手动运行该命令；请只填可信的启动脚本
+- 上述命令以 WSL 部署为例；其他环境（如 Linux 本机、远程服务器）填对应的启动命令即可
+
+> 若服务本就在线，不会重复启动；启动失败或服务 30 秒内未就绪，点歌会返回明确的失败原因。上面的 `start-api.wsl.sh` 是示例，需按你的实际部署路径编写一个**幂等启动脚本**（服务已在线时直接退出、否则后台启动 uvicorn），API 仓库文档可找到参考。
 
 ### 硬件要求说明
 

@@ -62,6 +62,16 @@ class CoverSection(PluginConfigBase):
         description="API 的 Bearer Key，服务端没设就留空",
         json_schema_extra={"label": "访问密钥"},
     )
+    auto_start_api: bool = Field(
+        default=False,
+        description="服务连不上时自动执行启动命令拉起 API（需先填启动命令）",
+        json_schema_extra={"label": "自动拉起服务"},
+    )
+    api_start_cmd: str = Field(
+        default="",
+        description="启动 API 的命令，例如 WSL 用户填：wsl.exe -d Ubuntu-24.04 -- bash /mnt/g/.../start.sh；留空则不自动拉起",
+        json_schema_extra={"label": "启动命令"},
+    )
     cooldown_seconds: int = Field(
         default=600, ge=0, le=86400,
         description="同一个人两次点歌的最短间隔",
@@ -149,6 +159,63 @@ class FeiyuCoverPlugin(MaiBotPlugin):
             )
         return self._http
 
+    async def _health_ok(self) -> bool:
+        """探测 API 是否在线（快速，2 秒超时）。"""
+        try:
+            resp = await self._client().get("/health", timeout=2.0)
+            return resp.status_code == 200
+        except Exception:  # noqa: BLE001
+            return False
+
+    async def _start_api(self) -> tuple[bool, str]:
+        """按配置执行启动命令拉起 API，并等待其就绪。
+
+        返回 (是否成功, 说明)。启动命令由用户自己填写，等价于用户手动执行该命令。
+        """
+        cmd = (self.config.cover.api_start_cmd or "").strip()
+        if not cmd:
+            return False, "未配置启动命令"
+        try:
+            # 用 shell 执行整条命令（用户填的是完整命令行），不等待其结束
+            proc = await asyncio.create_subprocess_shell(
+                cmd,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            # 启动命令通常很快返回（如 wsl 后台起服务），给它一点时间
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(proc.wait(), timeout=10.0)
+        except Exception as exc:  # noqa: BLE001
+            return False, f"启动命令执行失败：{exc}"
+
+        # 等 API 就绪，最多 30 秒，每 2 秒探一次
+        for _ in range(15):
+            if await self._health_ok():
+                return True, "服务已自动启动"
+            await asyncio.sleep(2.0)
+        return False, "启动命令已执行，但服务在 30 秒内未就绪"
+
+    async def _ensure_service(self) -> tuple[bool, str]:
+        """确保 API 可用：在线直接返回；否则按配置尝试自动拉起。
+
+        返回 (可用, 提示)。提示在服务不可用时给出可操作建议。
+        """
+        if await self._health_ok():
+            return True, ""
+        if not self.config.cover.auto_start_api:
+            return False, (
+                f"翻唱服务连接不可用（{self.config.cover.api_base}）。"
+                "请先部署并启动 feiyu-cover-api 服务；如需自动拉起，"
+                "请在插件配置中开启「自动拉起服务」并填写「启动命令」。"
+            )
+        ok, msg = await self._start_api()
+        if ok:
+            return True, ""
+        return False, (
+            f"翻唱服务连接不可用，自动拉起也失败：{msg}。"
+            "请检查「启动命令」配置，或手动启动 feiyu-cover-api 服务。"
+        )
+
     async def _post(self, path: str, payload: dict[str, Any],
                     timeout: float | None = None) -> dict[str, Any]:
         resp = await self._client().post(path, json=payload, timeout=timeout)
@@ -223,14 +290,18 @@ class FeiyuCoverPlugin(MaiBotPlugin):
 
     @API("jingge_state", description="读取音色参数、服务地址与健康状态")
     async def jingge_state(self) -> dict[str, Any]:
-        health: dict[str, Any] = {"ok": False, "message": "未检测"}
-        try:
-            client = self._client()
-            resp = await client.get("/health", timeout=5.0)
-            ok = resp.status_code == 200
-            health = {"ok": ok, "message": "服务在线" if ok else f"HTTP {resp.status_code}"}
-        except Exception as exc:  # noqa: BLE001
-            health = {"ok": False, "message": f"连不上服务（{type(exc).__name__}）"}
+        ok = await self._health_ok()
+        if ok:
+            health = {"ok": True, "message": "服务在线"}
+        else:
+            # 页面查询是只读的，不触发自动拉起；给出可操作提示
+            if self.config.cover.auto_start_api and (self.config.cover.api_start_cmd or "").strip():
+                tip = "服务离线；点歌时将按配置尝试自动拉起"
+            elif not (self.config.cover.api_start_cmd or "").strip():
+                tip = "服务离线；请部署 API，或在配置里填写启动命令并开启自动拉起"
+            else:
+                tip = "服务离线；请在配置里开启「自动拉起服务」"
+            health = {"ok": False, "message": tip}
         return {
             "voice": self._load_voice(),
             "defaults": dict(VOICE_DEFAULTS),
@@ -622,6 +693,11 @@ class FeiyuCoverPlugin(MaiBotPlugin):
         song = (song or "").strip()
         if not song:
             return {"success": False, "message": "没有收到歌名"}
+
+        # 服务可用性检查（必要时按配置自动拉起），失败直接给用户明确提示
+        ok, hint = await self._ensure_service()
+        if not ok:
+            return {"success": False, "message": hint}
 
         stream_id = str(kwargs.get("stream_id") or "")
         user_id = self._extract(kwargs, ("user_id", "sender_id", "qq", "operator_id"))
