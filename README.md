@@ -5,8 +5,8 @@
 </div>
 
 <p align="center">
-  🎧 <a href="https://cdn.jsdelivr.net/gh/Allure-Gui/feiyu-cover-plugin@main/assets/demo-yuai.mp3" target="_blank"><b>点击试听示例：《雨爱》翻唱片段</b></a>
-  <br><sub>（点击后将在浏览器中播放）</sub>
+  🎧 <a href="https://allure-gui.github.io/feiyu-cover-plugin/" target="_blank"><b>点击试听示例：《雨爱》翻唱片段</b></a>
+  <br><sub>（点击后将在试听页中播放）</sub>
 </p>
 
 ---
