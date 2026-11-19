@@ -21,7 +21,8 @@
 
 - 麦麦宿主 SDK ≥ 2.13.0
 - Python 包：`httpx`
-- **本地翻唱 API**（默认 `http://127.0.0.1:9881`）——本仓库不含该服务
+- **本地翻唱 API**（默认 `http://127.0.0.1:9881`）——本仓库不含该服务，
+  配套服务见 [feiyu-cover-api](https://github.com/Allure-Gui/feiyu-cover-api)
 
 API 需要提供这几个接口：
 
