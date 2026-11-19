@@ -17,7 +17,7 @@
   },
   "host_application": {
     "min_version": "1.0.0",
-    "max_version": "9.9.99"
+    "max_version": "1.4.99"
   },
   "sdk": {
     "min_version": "2.13.0",
@@ -34,10 +34,7 @@
   "capabilities": [
     "send.hybrid",
     "send.text",
-    "api.call",
-    "chat.get_all_streams",
-    "chat.get_group_streams",
-    "chat.get_private_streams"
+    "chat.get_all_streams"
   ],
   "i18n": {
     "default_locale": "zh-CN",

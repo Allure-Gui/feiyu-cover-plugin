@@ -1,11 +1,13 @@
 """鲸歌 · 麦麦插件
 
+⚠️ 前置依赖：本插件不含翻唱引擎，必须另配一个「翻唱 API」服务
+（本地或远程皆可，见 README）。装了插件 ≠ 能直接翻唱。
+
 设计要点（都是踩过的坑）：
 1. Tool 必须「立即返回」。翻唱要 3~5 分钟，宿主工具调用等不了，超时会失败。
-2. 结果由后台任务轮询本地 API，完成后主动推送到原群。
+2. 结果由后台任务轮询 API，完成后主动推送到原群。
 3. 后台任务存活于插件进程内，热重载会丢，所以任务表持久化到 data_dir，on_load 时恢复。
-4. ctx.send 不支持 record/file 富媒体段，发文件走 ctx.files.send，
-   失败再回退到 adapter 的 OneBot 接口，最后才降级为文本。
+4. 成品以语音条发送（ctx.send.hybrid 的 voice 段）；语音失败时降级为文本提示。
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ import contextlib
 import json
 import time
 from pathlib import Path
-from typing import Any, ClassVar, Iterable, Literal
+from typing import Any, ClassVar, Iterable
 
 from maibot_sdk import API, Command, Field, MaiBotPlugin, PluginConfigBase, Tool
 from maibot_sdk.types import ToolParameterInfo, ToolParamType
@@ -52,7 +54,7 @@ class CoverSection(PluginConfigBase):
 
     api_base: str = Field(
         default="http://127.0.0.1:9881",
-        description="本地翻唱 API 地址，WSL 里的服务直接用这个就行",
+        description="翻唱 API 地址：本地填 127.0.0.1，远程填服务器地址",
         json_schema_extra={"label": "服务地址"},
     )
     api_key: str = Field(
@@ -74,11 +76,6 @@ class CoverSection(PluginConfigBase):
         default=1800, ge=60, le=7200,
         description="单首歌最长等多久，超时放弃",
         json_schema_extra={"label": "最长等待（秒）"},
-    )
-    send_mode: Literal["auto", "adapter", "custom", "text"] = Field(
-        default="auto",
-        description="发文件的方式：auto 自动降级 / adapter 走适配器 / custom 自定义段 / text 只发路径",
-        json_schema_extra={"label": "发送方式"},
     )
     notify_progress: bool = Field(
         default=True,
@@ -124,7 +121,7 @@ class FeiyuCoverConfig(PluginConfigBase):
 
 class FeiyuCoverPlugin(MaiBotPlugin):
     config_model = FeiyuCoverConfig
-    config_reload_subscriptions: ClassVar[Iterable[str]] = ("bot",)
+    config_reload_subscriptions: ClassVar[Iterable[str]] = ("self",)
 
     def __init__(self) -> None:
         # 必须调用基类构造：self.config 依赖它初始化的 _plugin_config_data / _plugin_config_instance
@@ -152,8 +149,9 @@ class FeiyuCoverPlugin(MaiBotPlugin):
             )
         return self._http
 
-    async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        resp = await self._client().post(path, json=payload)
+    async def _post(self, path: str, payload: dict[str, Any],
+                    timeout: float | None = None) -> dict[str, Any]:
+        resp = await self._client().post(path, json=payload, timeout=timeout)
         resp.raise_for_status()
         return resp.json()
 
@@ -453,9 +451,22 @@ class FeiyuCoverPlugin(MaiBotPlugin):
             raise ValueError("请填写保存路径")
 
         target = Path(raw).expanduser()
+        # 拒绝路径穿越（..），避免写到预期之外的地方
+        if ".." in target.parts:
+            raise ValueError("路径不能包含 ..")
         # 目录 or 以 .mp3 结尾当作文件名
         if target.suffix.lower() != ".mp3":
             target = target / "鲸歌翻唱.mp3"
+
+        # 基本防护：禁止写入系统关键目录（该接口只绑 WebUI，仅宿主本人可调用，
+        # 保留自选路径是刚需，这里只拦最危险的位置）
+        resolved = str(target.resolve()).lower().replace("/", "\\")
+        blocked = (
+            "c:\\windows\\", "c:\\program files\\", "c:\\program files (x86)\\",
+            "c:\\programdata\\", "\\system32\\",
+        )
+        if any(b in resolved for b in blocked):
+            raise ValueError("出于安全考虑，不能保存到系统目录，请换个文件夹")
 
         resp = await self._client().get(f"/jobs/{job_id}/audio", timeout=180.0)
         if resp.status_code != 200:
@@ -499,7 +510,7 @@ class FeiyuCoverPlugin(MaiBotPlugin):
         self.ctx.logger.info("鲸歌插件已加载，API=%s，待恢复任务 %d 个",
                              self.config.cover.api_base, len(self._pending))
         for job_id, record in list(self._pending.items()):
-            self._spawn(self._watch(job_id, record, announce=False))
+            self._spawn(self._watch(job_id, record))
 
     async def on_unload(self) -> None:
         for task in list(self._tasks):
@@ -512,7 +523,7 @@ class FeiyuCoverPlugin(MaiBotPlugin):
                 await self._http.aclose()
             self._http = None
         self._save_state()
-        self.ctx.logger.info("肥鱼翻唱插件已卸载，任务表已保存")
+        self.ctx.logger.info("鲸歌插件已卸载，任务表已保存")
 
     async def on_config_update(self, scope: str, config_data: dict, version: str) -> None:
         if scope == "self":
@@ -655,11 +666,12 @@ class FeiyuCoverPlugin(MaiBotPlugin):
         }
 
         try:
-            data = await self._post("/cover", payload)
+            # 提交只需拿任务号，不必等 30 秒；超时快点失败好给用户反馈
+            data = await self._post("/cover", payload, timeout=15.0)
         except Exception as exc:  # noqa: BLE001
             self.ctx.logger.error("提交翻唱失败: %s", exc)
             return {"success": False,
-                    "message": f"本地翻唱服务没响应（{exc}）。确认 9881 服务在运行。"}
+                    "message": f"翻唱服务没响应（{exc}）。请确认 API 服务在运行、地址配置正确。"}
 
         job_id = data.get("id", "")
         position = int(data.get("queue_position", 1))
@@ -690,11 +702,8 @@ class FeiyuCoverPlugin(MaiBotPlugin):
                     stream_id,
                 )
 
-        # 工具调用已经回了一句，重复播报会变成两条消息；命令路径没有回声，才需要播报
-        self._spawn(self._watch(
-            job_id, record,
-            announce=self.config.cover.notify_progress and not from_tool,
-        ))
+        # 接单播报已在上面统一发过，这里不再重复（否则群里出现两条）
+        self._spawn(self._watch(job_id, record))
 
         if from_tool:
             # 只回一句，避免模型自己加戏（stop_after_execution 让本轮到此为止）
@@ -708,14 +717,10 @@ class FeiyuCoverPlugin(MaiBotPlugin):
                 "stop_after_execution": True}
 
     # ------------------------------------------------------------ 后台轮询
-    async def _watch(self, job_id: str, record: dict[str, Any], *, announce: bool) -> None:
+    async def _watch(self, job_id: str, record: dict[str, Any]) -> None:
         deadline = time.time() + int(self.config.cover.max_wait_seconds)
         interval = max(3, int(self.config.cover.poll_interval))
         last_step = ""
-
-        if announce and record.get("stream_id"):
-            with contextlib.suppress(Exception):
-                await self.ctx.send.text("好，我这就去唱~", record["stream_id"])
 
         while time.time() < deadline:
             await asyncio.sleep(interval)
@@ -782,7 +787,7 @@ class FeiyuCoverPlugin(MaiBotPlugin):
             record = dict(record, candidate_index=index)
             self._pending[new_id] = record
             self._save_state()
-            asyncio.create_task(self._poll(new_id, record))
+            self._spawn(self._watch(new_id, record))
         except Exception as exc:  # noqa: BLE001
             self.ctx.logger.error("换候选重试失败：%s", exc)
             if record.get("stream_id"):
@@ -804,13 +809,18 @@ class FeiyuCoverPlugin(MaiBotPlugin):
                     f"没找到《{title}》的原唱版本，用的是翻唱音频哦", stream_id,
                 )
 
+        # 兜底链：语音条 → 完整文件 → 文本提示
         sent = await self._send_voice_parts(job_id, title, stream_id)
         if sent > 0:
             return
-        # 只发语音条，失败就说明失败，不再退回文件
+        self.ctx.logger.warning("语音条发送失败，尝试降级为完整文件：%s", job_id)
+        if await self._send_file(job_id, title, stream_id):
+            return
         if stream_id:
             with contextlib.suppress(Exception):
-                await self.ctx.send.text(f"《{title}》唱好了，但语音发送失败，看下服务日志", stream_id)
+                await self.ctx.send.text(
+                    f"《{title}》唱好了，但发送失败，请去服务日志查看或到 WebUI 手动下载", stream_id,
+                )
 
     async def _send_voice_parts(self, job_id: str, title: str, stream_id: str) -> int:
         """把整首歌按 60 秒切成多条语音条发送。
@@ -975,9 +985,12 @@ class FeiyuCoverPlugin(MaiBotPlugin):
             state_file.parent.mkdir(parents=True, exist_ok=True)
             payload = dict(self._pending)
             payload["__cooldown__"] = self._cooldown
-            state_file.write_text(
+            # 原子写：先写临时文件再替换，避免崩溃时留下半个 json
+            tmp = state_file.with_suffix(state_file.suffix + ".tmp")
+            tmp.write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
             )
+            tmp.replace(state_file)
         except OSError as exc:
             self.ctx.logger.warning("保存任务表失败: %s", exc)
 
