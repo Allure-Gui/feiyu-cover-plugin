@@ -85,6 +85,11 @@ class CoverSection(PluginConfigBase):
         description="接单时是否在群里回一句「我去唱」",
         json_schema_extra={"label": "接单播报"},
     )
+    bot_name: str = Field(
+        default="",
+        description="回复里用的自称。留空则自动取机器人昵称，取不到就用「麦麦」",
+        json_schema_extra={"label": "机器人自称"},
+    )
 
 
 # 音色参数不再走 config.toml：由侧边栏页面「鲸歌」直接编辑插件数据目录下的 voice.json，
@@ -161,6 +166,17 @@ class FeiyuCoverPlugin(MaiBotPlugin):
     def _voice_path(self) -> Path:
         return Path(self.ctx.paths.data_dir) / "voice.json"
 
+    def _bot_name(self) -> str:
+        """回复用的自称：配置 > 宿主昵称 > 麦麦。"""
+        configured = (self.config.cover.bot_name or "").strip()
+        if configured:
+            return configured
+        for attr in ("bot_name", "bot_nickname", "nickname", "self_name"):
+            value = getattr(self.ctx, attr, None)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return "麦麦"
+
     def _load_voice(self) -> dict[str, Any]:
         data = dict(VOICE_DEFAULTS)
         try:
@@ -174,7 +190,7 @@ class FeiyuCoverPlugin(MaiBotPlugin):
             self.ctx.logger.warning("读取 voice.json 失败，先用默认值：%s", exc)
         return data
 
-    def _save_voice(self, incoming: dict[str, Any]) -> dict[str, Any]:
+    def _save_voice(self, incoming: dict[str, Any], persist: bool = True) -> dict[str, Any]:
         clean: dict[str, Any] = {}
         for key, default in VOICE_DEFAULTS.items():
             value = incoming.get(key, default)
@@ -196,6 +212,9 @@ class FeiyuCoverPlugin(MaiBotPlugin):
             value = incoming.get(key)
             if isinstance(value, str) and value.strip():
                 clean[key] = value.strip()
+
+        if not persist:
+            return clean          # 试听用：只校验范围，不写入，别影响群里点歌的音色
 
         path = self._voice_path()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -332,6 +351,127 @@ class FeiyuCoverPlugin(MaiBotPlugin):
             "eta_seconds": job.get("eta_seconds", 240),
         }
 
+    @API("jingge_preview", description="试听工作台：用临时参数生成，不影响已保存的语音路由")
+    async def jingge_preview(self, payload: str) -> dict[str, Any]:
+        try:
+            data = json.loads(payload)
+        except (ValueError, RecursionError):
+            raise ValueError("参数不是合法 JSON") from None
+        if not isinstance(data, dict):
+            raise ValueError("参数必须是对象")
+        song = str(data.get("song") or "").strip()
+        if not song:
+            raise ValueError("请先填写歌名")
+
+        draft = data.get("voice") if isinstance(data.get("voice"), dict) else {}
+        # 以当前保存的配置为底，叠上试听参数，但绝不落盘
+        merged = {**self._load_voice(), **draft}
+        voice = self._save_voice(merged, persist=False)
+
+        body = {
+            "song": song,
+            "voice": {
+                "pitch": int(voice["pitch"]),
+                "index_rate": float(voice["index_rate"]),
+                "protect": float(voice["protect"]),
+                "volume_envelope": float(voice["volume_envelope"]),
+                "f0_method": voice["f0_method"],
+                "formant_shifting": bool(voice["formant_shifting"]),
+                "formant_qfrency": float(voice["formant_qfrency"]),
+                **({"model": voice["model"]} if voice.get("model") else {}),
+                **({"index": voice["index"]} if voice.get("index") else {}),
+            },
+            "requester": "playground",
+        }
+        resp = await self._client().post("/cover", json=body)
+        resp.raise_for_status()
+        job = resp.json()
+        return {
+            "job_id": str(job.get("id") or ""),
+            "queue_position": job.get("queue_position", 1),
+            "eta_seconds": job.get("eta_seconds", 240),
+            "voice": voice,
+        }
+
+    @API("jingge_audio", description="分片取 60 秒试听音频（宿主单次返回限 512KB，所以切片传）")
+    async def jingge_audio(self, job_id: str, part: int = 0, chunk: int = 0) -> dict[str, Any]:
+        if not job_id.strip():
+            raise ValueError("缺少任务号")
+        resp = await self._client().get(
+            f"/jobs/{job_id}/voice-part/{int(part)}", timeout=120.0,
+        )
+        if resp.status_code != 200:
+            raise ValueError(f"第 {int(part) + 1} 段还没准备好（HTTP {resp.status_code}）")
+
+        data = resp.content
+        size = 240 * 1024                      # base64 后约 320KB，留足余量
+        total = max(1, (len(data) + size - 1) // size)
+        idx = min(max(int(chunk), 0), total - 1)
+        piece = data[idx * size:(idx + 1) * size]
+
+        return {
+            "audio": base64.b64encode(piece).decode("ascii"),
+            "chunk": idx,
+            "chunks": total,
+            "content_type": resp.headers.get("content-type") or "audio/mpeg",
+            "size_kb": round(len(data) / 1024, 1),
+            "part": int(part),
+        }
+
+    @API("jingge_file", description="分片取完整成品音频，供试听工作台下载")
+    async def jingge_file(self, job_id: str, chunk: int = 0) -> dict[str, Any]:
+        if not job_id.strip():
+            raise ValueError("缺少任务号")
+        resp = await self._client().get(f"/jobs/{job_id}/audio", timeout=180.0)
+        if resp.status_code != 200:
+            raise ValueError(f"成品还没准备好（HTTP {resp.status_code}）")
+
+        data = resp.content
+        size = 240 * 1024
+        total = max(1, (len(data) + size - 1) // size)
+        idx = min(max(int(chunk), 0), total - 1)
+        piece = data[idx * size:(idx + 1) * size]
+
+        return {
+            "audio": base64.b64encode(piece).decode("ascii"),
+            "chunk": idx,
+            "chunks": total,
+            "total_kb": round(len(data) / 1024, 1),
+            "content_type": resp.headers.get("content-type") or "audio/mpeg",
+        }
+
+    @API("jingge_save_to", description="把翻唱成品直接保存到指定的本地路径（绕开内嵌浏览器不能弹另存为的限制）")
+    async def jingge_save_to(self, job_id: str, path: str) -> dict[str, Any]:
+        """把完整成品写到插件宿主（Windows）上的指定路径。
+
+        path 可以是目录（自动用歌名命名）或以 .mp3 结尾的完整文件路径。
+        """
+        if not job_id.strip():
+            raise ValueError("缺少任务号")
+        raw = (path or "").strip().strip('"')
+        if not raw:
+            raise ValueError("请填写保存路径")
+
+        target = Path(raw).expanduser()
+        # 目录 or 以 .mp3 结尾当作文件名
+        if target.suffix.lower() != ".mp3":
+            target = target / "鲸歌翻唱.mp3"
+
+        resp = await self._client().get(f"/jobs/{job_id}/audio", timeout=180.0)
+        if resp.status_code != 200:
+            raise ValueError(f"成品还没准备好（HTTP {resp.status_code}）")
+
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(resp.content)
+        except OSError as exc:
+            raise ValueError(f"写入失败：{exc}") from None
+
+        return {
+            "path": str(target),
+            "size_kb": round(len(resp.content) / 1024, 1),
+        }
+
     @API("jingge_job", description="查询翻唱任务状态")
     async def jingge_job(self, job_id: str) -> dict[str, Any]:
         resp = await self._client().get(f"/jobs/{job_id}")
@@ -393,13 +533,20 @@ class FeiyuCoverPlugin(MaiBotPlugin):
             "【参数】song 填歌名，可带歌手名帮助匹配，例如「晴天 周杰伦」；"
             "pitch 是变调半音，不确定就留空（默认 0），男声原曲改成女声填 12。\n"
             "\n"
-            "调用后立即返回接单结果，不要等待生成完成，也不要反复调用同一个请求。"
+            "调用后立即返回接单结果，不要等待生成完成，也不要反复调用同一个请求。\n"
+            "重要：不要擅自改写用户点播的歌曲信息。用户说了版本（如「司凤版」「女声版」「Live」）"
+            "就按原样传，不要替换成原版，也不要自己加歌手名覆盖用户给的信息。"
         ),
         parameters=[
             ToolParameterInfo(
                 name="song",
                 param_type=ToolParamType.STRING,
-                description="歌曲名，尽量只填歌名，可带歌手名帮助匹配，例如「晴天 周杰伦」",
+                description=(
+                    "歌曲名，可带歌手名帮助匹配，例如「晴天 周杰伦」。"
+                    "**用户指定了版本、翻唱者或编曲时，必须原样保留，不得删改或替换成原版**，"
+                    "例如「雨爱 司凤版」「起风了 女声版」「晴天 Live」都要照抄。"
+                    "只有用户没提版本时，才用「歌名 歌手」的形式。"
+                ),
                 required=True,
             ),
             ToolParameterInfo(
@@ -533,6 +680,16 @@ class FeiyuCoverPlugin(MaiBotPlugin):
         if user_id:
             self._cooldown[user_id] = time.time()
 
+        # 接单必须吭一声：工具调用只把结果回给模型，群里是不出声的，
+        # 不说一句用户会以为没反应。
+        if stream_id and self.config.cover.notify_progress:
+            wait = "马上" if position <= 1 else f"前面还有 {position - 1} 首"
+            with contextlib.suppress(Exception):
+                await self.ctx.send.text(
+                    f"好的，{self._bot_name()}在唱了～《{song}》{wait}就好",
+                    stream_id,
+                )
+
         # 工具调用已经回了一句，重复播报会变成两条消息；命令路径没有回声，才需要播报
         self._spawn(self._watch(
             job_id, record,
@@ -577,6 +734,15 @@ class FeiyuCoverPlugin(MaiBotPlugin):
                 return
             if status in ("failed", "interrupted"):
                 reason = data.get("error") or data.get("message") or "未知原因"
+                # 分离后发现没主唱（伴奏版）→ 自动换下一个搜索结果重试
+                if "没有可用人声" in str(reason):
+                    retried = int(record.get("candidate_index") or 0) + 1
+                    if retried <= 2:
+                        self.ctx.logger.info("第 %d 版是伴奏，换下一个候选", retried)
+                        self._pending.pop(job_id, None)
+                        self._save_state()
+                        await self._retry_candidate(record, retried)
+                        return
                 if record.get("stream_id"):
                     with contextlib.suppress(Exception):
                         await self.ctx.send.text(
@@ -596,6 +762,36 @@ class FeiyuCoverPlugin(MaiBotPlugin):
         self._save_state()
 
     # ------------------------------------------------------------ 发送成品
+    async def _retry_candidate(self, record: dict[str, Any], index: int) -> None:
+        """换搜索结果里的下一个版本重试（当前版本分离出来没有主唱）。"""
+        try:
+            payload = {
+                "song": record.get("song"),
+                "candidate_index": index,
+                "requester": record.get("requester", ""),
+                "stream_id": record.get("stream_id", ""),
+            }
+            if record.get("voice"):
+                payload["voice"] = record["voice"]
+            resp = await self._client().post("/cover", json=payload, timeout=60.0)
+            resp.raise_for_status()
+            data = resp.json()
+            new_id = data.get("id") or data.get("job_id")
+            if not new_id:
+                raise RuntimeError("接口没返回任务号")
+            record = dict(record, candidate_index=index)
+            self._pending[new_id] = record
+            self._save_state()
+            asyncio.create_task(self._poll(new_id, record))
+        except Exception as exc:  # noqa: BLE001
+            self.ctx.logger.error("换候选重试失败：%s", exc)
+            if record.get("stream_id"):
+                with contextlib.suppress(Exception):
+                    await self.ctx.send.text(
+                        f"《{record.get('song')}》几个版本都没有主唱，换首别的吧",
+                        record["stream_id"],
+                    )
+
     async def _deliver(self, job_id: str, data: dict, record: dict[str, Any]) -> None:
         stream_id = record.get("stream_id") or ""
         title = (data.get("meta") or {}).get("title") or record.get("song") or "翻唱"

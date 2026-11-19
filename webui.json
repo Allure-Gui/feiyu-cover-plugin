@@ -9,7 +9,7 @@
       "title": "鲸歌",
       "description": "音色工作室：调参、试听与发送",
       "placement": "sidebar",
-      "icon": "settings",
+      "icon": "puzzle",
       "mode": "custom",
       "entry": "webui/index.html",
       "layout": "viewport",
@@ -38,6 +38,44 @@
         },
         "models": {
           "api": "jingge_models"
+        },
+        "audio": {
+          "api": "jingge_audio",
+          "parameters": {
+            "job_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 64
+            },
+            "part": {
+              "type": "integer",
+              "required": false,
+              "minimum": 0,
+              "maximum": 9
+            },
+            "chunk": {
+              "type": "integer",
+              "required": false,
+              "minimum": 0,
+              "maximum": 99
+            }
+          }
+        },
+        "file": {
+          "api": "jingge_file",
+          "parameters": {
+            "job_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 64
+            },
+            "chunk": {
+              "type": "integer",
+              "required": false,
+              "minimum": 0,
+              "maximum": 99
+            }
+          }
         }
       },
       "actions": {
@@ -81,6 +119,31 @@
             "user_id": {
               "type": "string",
               "max_length": 64
+            }
+          }
+        },
+        "preview": {
+          "api": "jingge_preview",
+          "parameters": {
+            "payload": {
+              "type": "string",
+              "required": true,
+              "max_length": 65536
+            }
+          }
+        },
+        "save_to": {
+          "api": "jingge_save_to",
+          "parameters": {
+            "job_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 64
+            },
+            "path": {
+              "type": "string",
+              "required": true,
+              "max_length": 1024
             }
           }
         }
