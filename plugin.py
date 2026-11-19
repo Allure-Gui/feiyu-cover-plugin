@@ -633,6 +633,23 @@ class FeiyuCoverPlugin(MaiBotPlugin):
                              self.config.cover.api_base, len(self._pending))
         for job_id, record in list(self._pending.items()):
             self._spawn(self._watch(job_id, record))
+        # 重载/加载时也按需拉起服务（后台执行，避免阻塞加载）
+        if self.config.cover.auto_start_api and (self.config.cover.api_start_cmd or "").strip():
+            self._spawn(self._auto_start_on_load())
+
+    async def _auto_start_on_load(self) -> None:
+        """加载时若服务离线则尝试拉起，结果只记日志，不阻塞 on_load。"""
+        try:
+            # 重载时旧实例的停止命令可能仍在执行（走 WSL 约 1-2 秒），
+            # 稍等再探测，避免「检测时还在线→随后被关」导致最终离线
+            await asyncio.sleep(3.0)
+            ok, msg = await self._ensure_service()
+            if ok:
+                self.ctx.logger.info("鲸歌：翻唱服务已就绪")
+            else:
+                self.ctx.logger.warning("鲸歌：加载时服务不可用：%s", msg)
+        except Exception as exc:  # noqa: BLE001
+            self.ctx.logger.warning("鲸歌：加载时自动拉起异常：%s", exc)
 
     async def on_unload(self) -> None:
         for task in list(self._tasks):
