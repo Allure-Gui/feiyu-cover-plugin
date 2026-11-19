@@ -10,6 +10,10 @@ auto_start_api = false
 # 启动 API 的命令；WSL 示例：wsl.exe -d Ubuntu-24.04 -- bash /mnt/g/feiyu-cover/install/start-api.wsl.sh
 # 留空则不会自动拉起，服务离线时会给出「连接不可用」提示
 api_start_cmd = ""
+# 插件卸载时是否关闭 API（仅关闭此前由本插件自动拉起的服务）
+auto_stop_api = false
+# 关闭 API 的命令；WSL 示例：wsl.exe -d Ubuntu-24.04 -- bash /mnt/g/feiyu-cover/install/stop-api.wsl.sh
+api_stop_cmd = ""
 cooldown_seconds = 600
 poll_interval = 10
 max_wait_seconds = 1800

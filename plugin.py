@@ -72,6 +72,16 @@ class CoverSection(PluginConfigBase):
         description="启动 API 的命令，例如 WSL 用户填：wsl.exe -d Ubuntu-24.04 -- bash /mnt/g/.../start.sh；留空则不自动拉起",
         json_schema_extra={"label": "启动命令"},
     )
+    auto_stop_api: bool = Field(
+        default=False,
+        description="插件卸载时关闭 API（仅关闭此前由本插件自动拉起的服务，不影响手动启动的）",
+        json_schema_extra={"label": "卸载时关闭服务"},
+    )
+    api_stop_cmd: str = Field(
+        default="",
+        description="关闭 API 的命令；留空则自动从启动命令推导，或用内置的 WSL uvicorn 停止方式",
+        json_schema_extra={"label": "停止命令"},
+    )
     cooldown_seconds: int = Field(
         default=600, ge=0, le=86400,
         description="同一个人两次点歌的最短间隔",
@@ -141,6 +151,12 @@ class FeiyuCoverPlugin(MaiBotPlugin):
         self._cooldown: dict[str, float] = {}
         self._state_file: Path | None = None
         self._http: httpx.AsyncClient | None = None
+        self._started_flag: Path | None = None  # 标记「服务由本插件拉起」的文件
+
+    def _flag_path(self) -> Path | None:
+        if self._started_flag is None:
+            return None
+        return self._started_flag
 
     # ------------------------------------------------------------ HTTP 客户端
     def _client(self) -> "httpx.AsyncClient":
@@ -191,9 +207,43 @@ class FeiyuCoverPlugin(MaiBotPlugin):
         # 等 API 就绪，最多 30 秒，每 2 秒探一次
         for _ in range(15):
             if await self._health_ok():
+                # 标记「服务由本插件拉起」，卸载时据此决定是否关闭
+                flag = self._flag_path()
+                if flag:
+                    with contextlib.suppress(OSError):
+                        flag.write_text(str(time.time()), encoding="utf-8")
                 return True, "服务已自动启动"
             await asyncio.sleep(2.0)
         return False, "启动命令已执行，但服务在 30 秒内未就绪"
+
+    async def _stop_api(self) -> str:
+        """关闭 API（仅当标记表明服务是本插件拉起的）。
+
+        返回说明文字。未开启自动关闭 / 无标记 / 未配停止命令时都不动作。
+        """
+        if not self.config.cover.auto_stop_api:
+            return "未开启自动关闭"
+        flag = self._flag_path()
+        if not flag or not flag.exists():
+            return "服务非本插件拉起，跳过关闭"
+        cmd = (self.config.cover.api_stop_cmd or "").strip()
+        if not cmd:
+            return "未配置停止命令，跳过关闭"
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                cmd,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(proc.wait(), timeout=15.0)
+        except Exception as exc:  # noqa: BLE001
+            return f"停止命令执行失败：{exc}"
+        finally:
+            # 无论成功与否都清标记，避免下次误判
+            with contextlib.suppress(OSError):
+                flag.unlink(missing_ok=True)
+        return "已执行停止命令"
 
     async def _ensure_service(self) -> tuple[bool, str]:
         """确保 API 可用：在线直接返回；否则按配置尝试自动拉起。
@@ -577,6 +627,7 @@ class FeiyuCoverPlugin(MaiBotPlugin):
     # ------------------------------------------------------------ 生命周期
     async def on_load(self) -> None:
         self._state_file = Path(self.ctx.paths.data_dir) / "pending_jobs.json"
+        self._started_flag = Path(self.ctx.paths.data_dir) / "api_started_by_plugin.flag"
         self._load_state()
         self.ctx.logger.info("鲸歌插件已加载，API=%s，待恢复任务 %d 个",
                              self.config.cover.api_base, len(self._pending))
@@ -594,7 +645,9 @@ class FeiyuCoverPlugin(MaiBotPlugin):
                 await self._http.aclose()
             self._http = None
         self._save_state()
-        self.ctx.logger.info("鲸歌插件已卸载，任务表已保存")
+        # 仅关闭由本插件拉起的服务（有标记），避免误杀用户手动启动的 API
+        stop_msg = await self._stop_api()
+        self.ctx.logger.info("鲸歌插件已卸载，任务表已保存；服务关闭：%s", stop_msg)
 
     async def on_config_update(self, scope: str, config_data: dict, version: str) -> None:
         if scope == "bot":

@@ -40,6 +40,15 @@ api_start_cmd = "wsl.exe -d Ubuntu-24.04 -- bash /mnt/g/feiyu-cover/install/star
 
 > 若服务本就在线，不会重复启动；启动失败或服务 30 秒内未就绪，点歌会返回明确的失败原因。上面的 `start-api.wsl.sh` 是示例，需按你的实际部署路径编写一个**幂等启动脚本**（服务已在线时直接退出、否则后台启动 uvicorn），API 仓库文档可找到参考。
 
+同理可让插件卸载时自动关闭服务：
+
+```toml
+auto_stop_api = true
+api_stop_cmd = "wsl.exe -d Ubuntu-24.04 -- bash /mnt/g/feiyu-cover/install/stop-api.wsl.sh"
+```
+
+> **只关闭「由本插件自动拉起」的服务**（插件会记录标记）。若服务是你手动启动的，插件卸载时不会动它，避免误杀共享服务。
+
 ### 硬件要求说明
 
 | 环节 | 是否必需显卡 | 说明 |
