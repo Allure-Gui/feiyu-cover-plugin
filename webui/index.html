@@ -43,6 +43,12 @@
   .status.starting{color:#8a6d1f;background:#fdf7e3;border-color:#f0e2b0}
   .status.starting .dot{background:#d8a825;animation:pulse 1.2s ease-in-out infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  .health-group{margin-left:auto;display:inline-flex;align-items:center;gap:7px}
+  .health-group .status{margin-left:0}
+  .recheck-btn{font:inherit;font-size:11px;color:var(--muted);cursor:pointer;
+    padding:5px 9px;border-radius:8px;border:1px solid var(--line);background:#fff;white-space:nowrap}
+  .recheck-btn:hover{background:var(--blue-soft);color:var(--blue-deep);border-color:var(--blue-line)}
+  .recheck-btn:disabled{opacity:.5;cursor:default}
 
   nav{display:flex;gap:6px;padding:0 22px;background:var(--card);
     border-bottom:1px solid var(--line);flex:0 0 auto}
@@ -156,7 +162,10 @@
     <h1>鲸歌 · 音色工作室</h1>
     <div class="sub mono">VOICE STUDIO</div>
   </div>
-  <div class="status" id="health"><span class="dot"></span><span id="healthText">检测中</span></div>
+  <div class="health-group">
+    <div class="status" id="health"><span class="dot"></span><span id="healthText">检测中</span></div>
+    <button class="recheck-btn" id="btnRecheck" title="重新检测 / 拉起服务">↻ 检测</button>
+  </div>
 </header>
 
 <nav>
@@ -531,6 +540,17 @@
   });
   $("#btnSave").addEventListener("click", doSave);
   $("#btnRender").addEventListener("click", doRender);
+  $("#btnRecheck").addEventListener("click", function(){
+    var btn = this;
+    btn.disabled = true;
+    paintHealth({ok:false, starting:true, message:"正在检测服务…"});
+    maibot.action("recheck").then(function(r){
+      paintHealth({ok:!!r.ok, starting:!!r.starting,
+                   message:r.message || (r.ok ? "服务在线" : "服务离线")});
+    }).catch(function(e){
+      paintHealth({ok:false, starting:false, message:"检测失败：" + (e.message||e)});
+    }).finally(function(){ btn.disabled = false; });
+  });
   $("#btnReset").addEventListener("click", function(){
     S.draft = JSON.parse(JSON.stringify(S.live));
     paintPlay();

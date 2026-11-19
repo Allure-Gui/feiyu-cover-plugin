@@ -370,6 +370,20 @@ class FeiyuCoverPlugin(MaiBotPlugin):
             "health": health,
         }
 
+    @API("jingge_recheck", description="重新检测并在需要时拉起服务（返回最新状态）")
+    async def jingge_recheck(self) -> dict[str, Any]:
+        """手动触发：若服务离线且配置了自动拉起，则拉起并返回拉起中状态。
+
+        前端按钮点击后调用，配合状态轮询可看到「拉起中 → 在线」变化。
+        """
+        ok, msg = await self._ensure_service()
+        if ok:
+            return {"ok": True, "starting": False, "message": "服务在线"}
+        # 若已配置自动拉起，_ensure_service 内部已触发 _start_api 并设置了 _starting
+        if self._starting:
+            return {"ok": False, "starting": True, "message": "服务正在拉起中，请稍候…"}
+        return {"ok": False, "starting": False, "message": msg}
+
     @API("jingge_save", description="保存音色参数，下一次点歌立即生效")
     async def jingge_save(self, payload: str) -> dict[str, Any]:
         try:

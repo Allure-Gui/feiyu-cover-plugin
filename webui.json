@@ -79,6 +79,9 @@
         }
       },
       "actions": {
+        "recheck": {
+          "api": "jingge_recheck"
+        },
         "save": {
           "api": "jingge_save",
           "parameters": {
