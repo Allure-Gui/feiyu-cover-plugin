@@ -121,7 +121,7 @@ class FeiyuCoverConfig(PluginConfigBase):
 
 class FeiyuCoverPlugin(MaiBotPlugin):
     config_model = FeiyuCoverConfig
-    config_reload_subscriptions: ClassVar[Iterable[str]] = ("self",)
+    config_reload_subscriptions: ClassVar[Iterable[str]] = ("bot",)
 
     def __init__(self) -> None:
         # 必须调用基类构造：self.config 依赖它初始化的 _plugin_config_data / _plugin_config_instance
@@ -526,8 +526,8 @@ class FeiyuCoverPlugin(MaiBotPlugin):
         self.ctx.logger.info("鲸歌插件已卸载，任务表已保存")
 
     async def on_config_update(self, scope: str, config_data: dict, version: str) -> None:
-        if scope == "self":
-            self.ctx.logger.info("配置已更新 (version=%s)", version)
+        if scope == "bot":
+            self.ctx.logger.info("配置已更新 (scope=%s, version=%s)", scope, version)
 
     # ------------------------------------------------------------ 工具：提交
     @Tool(
