@@ -53,7 +53,7 @@ class CoverSection(PluginConfigBase):
     __ui_order__ = 1
 
     api_base: str = Field(
-        default="http://127.0.0.1:9881",
+        default="http://127.0.0.1:19655",
         description="翻唱 API 地址：本地填 127.0.0.1，远程填服务器地址",
         json_schema_extra={"label": "服务地址"},
     )
