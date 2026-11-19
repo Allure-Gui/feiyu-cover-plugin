@@ -5,8 +5,8 @@
 </div>
 
 <p align="center">
-  <audio controls src="assets/demo-yuai.mp3"></audio><br>
-  <sub>示例：《雨爱》翻唱片段（点击播放）</sub>
+  🎧 <a href="https://github.com/Allure-Gui/feiyu-cover-plugin/blob/main/assets/demo-yuai.mp3"><b>点击试听示例：《雨爱》翻唱片段</b></a>
+  <br><sub>（点击后将在 GitHub 内置播放器中播放）</sub>
 </p>
 
 ---
