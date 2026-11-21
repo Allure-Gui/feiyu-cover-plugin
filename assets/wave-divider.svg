@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 48" width="900" height="48" fill="none">
+  <!-- Soft pastel watercolor wave ribbon -->
+  <path d="M18 30 C95 16, 165 42, 245 28 C325 14, 395 40, 450 28 C505 16, 575 42, 655 28 C735 14, 805 40, 882 26"
+        stroke="#A7CFF9" stroke-width="7" stroke-linecap="round" opacity="0.55"/>
+  <!-- Fine-liner hand-drawn ocean wave -->
+  <path d="M16 28 C96 14, 166 40, 246 26 C326 12, 396 38, 450 26 C504 14, 574 40, 654 26 C734 12, 804 38, 884 24"
+        stroke="#24344D" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="1 0"/>
+  <!-- Little whale tail splash in center -->
+  <g transform="translate(450, 24)">
+    <path d="M0 4 C-1 -5, -4 -10, -14 -13 C-10 -6, -6 -3, -3 2 C-1 0, 1 0, 3 2 C6 -3, 10 -6, 14 -13 C4 -10, 1 -5, 0 4 Z"
+          fill="#7FB3F5" stroke="#24344D" stroke-width="1.8" stroke-linejoin="round"/>
+    <circle cx="-22" cy="-8" r="2.2" fill="#F28B72"/>
+    <circle cx="23" cy="-9" r="2.5" fill="#F5B841"/>
+    <path d="M-36 -2 l3 -6 l3 6 l-6 -3.5 h6 z" fill="#F5B841" opacity="0.9"/>
+    <path d="M35 -3 l3 -6 l3 6 l-6 -3.5 h6 z" fill="#F28B72" opacity="0.9"/>
+  </g>
+  <!-- Left floating musical note -->
+  <g transform="translate(210, 12)">
+    <path d="M0 11 V2 L9 0 V9" stroke="#24344D" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <ellipse cx="-2.2" cy="11.5" rx="3" ry="2.2" fill="#F28B72" stroke="#24344D" stroke-width="1.5"/>
+    <ellipse cx="6.8" cy="9.5" rx="3" ry="2.2" fill="#F5B841" stroke="#24344D" stroke-width="1.5"/>
+  </g>
+  <!-- Right floating musical note -->
+  <g transform="translate(682, 10)">
+    <path d="M0 12 V2 L8 4" stroke="#24344D" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <ellipse cx="-2.2" cy="12.5" rx="3" ry="2.2" fill="#7FB3F5" stroke="#24344D" stroke-width="1.5"/>
+  </g>
+</svg>

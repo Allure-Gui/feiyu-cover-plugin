@@ -1,9 +1,9 @@
 {
   "manifest_version": 2,
   "id": "feiyu.voice-cover",
-  "version": "0.1.6",
-  "name": "鲸歌",
-  "description": "点歌翻唱：群里说一句想听的歌，用鲸歌的声音唱出来，成品直接发到群里",
+  "version": "0.2.0",
+  "name": "麦弦",
+  "description": "麦弦（MaiChord）：点歌翻唱、清唱猜歌与本地音色工作室，群里点一首歌，用麦麦的声音唱出来",
   "author": {
     "name": "Allure-Gui",
     "url": "https://github.com/Allure-Gui"
@@ -32,9 +32,16 @@
   ],
   "plugin_type": "media",
   "capabilities": [
+    "config.get",
     "send.hybrid",
     "send.text",
-    "chat.get_all_streams"
+    "send.image",
+    "chat.get_all_streams",
+    "message.get_recent",
+    "maisaka.context.append",
+    "render.html2png",
+    "desktop_pet.say",
+    "desktop_pet.play_event"
   ],
   "i18n": {
     "default_locale": "zh-CN",

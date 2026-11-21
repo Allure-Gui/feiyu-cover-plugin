@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 235" width="920" height="235" fill="none">
+  <defs>
+    <filter id="paperShadow" x="-2%" y="-4%" width="104%" height="112%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#24344D" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+
+  <!-- Canvas -->
+  <rect x="6" y="6" width="908" height="223" rx="22" fill="#FFFDF7" stroke="#24344D" stroke-width="2.5"/>
+  <rect x="13" y="13" width="894" height="209" rx="17" fill="none" stroke="#9EC5F8" stroke-width="1.4" stroke-dasharray="6 5"/>
+
+  <!-- Title -->
+  <text x="460" y="42" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="16" font-weight="700" fill="#24344D">
+    麦弦（MaiChord）· 群聊点歌与声学工作流（v0.2.0）
+  </text>
+
+  <!-- Card 1 -->
+  <g transform="translate(30, 62)" filter="url(#paperShadow)">
+    <rect width="190" height="136" rx="16" fill="#F2F8FF" stroke="#24344D" stroke-width="2"/>
+    <rect x="12" y="12" width="46" height="22" rx="11" fill="#3B7DD8"/>
+    <text x="35" y="27" text-anchor="middle" font-family="sans-serif" font-size="11.5" font-weight="700" fill="#FFFFFF">STEP 1</text>
+    <rect x="74" y="12" width="98" height="32" rx="12" fill="#FFFFFF" stroke="#24344D" stroke-width="1.6"/>
+    <text x="123" y="32" text-anchor="middle" font-family="'Microsoft YaHei',sans-serif" font-size="11.5" fill="#24344D">/翻唱 起风了</text>
+    <text x="95" y="76" text-anchor="middle" font-family="'Microsoft YaHei',sans-serif" font-size="14.5" font-weight="700" fill="#24344D">点歌与互动玩法</text>
+    <text x="95" y="99" text-anchor="middle" font-family="'Microsoft YaHei',sans-serif" font-size="11.5" fill="#526580">自然语言 / /翻唱 / /猜歌</text>
+    <text x="95" y="118" text-anchor="middle" font-family="'Microsoft YaHei',sans-serif" font-size="11.5" fill="#526580">支持群独立猜歌排行榜</text>
+  </g>
+
+  <!-- Arrow 1 -> 2 -->
+  <path d="M225 128 C236 118, 242 118, 250 128" stroke="#F28B72" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="4 3"/>
+  <path d="M245 123 L252 128 L245 133" stroke="#F28B72" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Card 2 -->
+  <g transform="translate(256, 62)" filter="url(#paperShadow)">
+    <rect width="190" height="136" rx="16" fill="#FFF7EE" stroke="#24344D" stroke-width="2"/>
+    <rect x="12" y="12" width="46" height="22" rx="11" fill="#E87A64"/>
+    <text x="35" y="27" text-anchor="middle" font-family="sans-serif" font-size="11.5" font-weight="700" fill="#FFFFFF">STEP 2</text>
+    <line x1="84" y1="20" x2="162" y2="20" stroke="#24344D" stroke-width="1.8" stroke-linecap="round"/>
+    <circle cx="116" cy="20" r="5" fill="#F5B841" stroke="#24344D" stroke-width="1.6"/>
+    <line x1="84" y1="35" x2="162" y2="35" stroke="#24344D" stroke-width="1.8" stroke-linecap="round"/>
+    <circle cx="142" cy="35" r="5" fill="#7FB3F5" stroke="#24344D" stroke-width="1.6"/>
+    <text x="95" y="76" text-anchor="middle" font-family="'Microsoft YaHei',sans-serif" font-size="14.5" font-weight="700" fill="#24344D">音色路由与试听</text>
+    <text x="95" y="99" text-anchor="middle" font-family="'Microsoft YaHei',sans-serif" font-size="11.5" fill="#526580">命名预设快切 · 60s 试听</text>
+    <text x="95" y="118" text-anchor="middle" font-family="'Microsoft YaHei',sans-serif" font-size="11.5" fill="#526580">音色感知智能变调保护</text>
+  </g>
+
+  <!-- Arrow 2 -> 3 -->
+  <path d="M451 128 C462 138, 468 138, 476 128" stroke="#3B7DD8" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="4 3"/>
+  <path d="M471 123 L478 128 L471 133" stroke="#3B7DD8" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Card 3 -->
+  <g transform="translate(482, 62)" filter="url(#paperShadow)">
+    <rect width="190" height="136" rx="16" fill="#F2FBF5" stroke="#24344D" stroke-width="2"/>
+    <rect x="12" y="12" width="46" height="22" rx="11" fill="#4FA374"/>
+    <text x="35" y="27" text-anchor="middle" font-family="sans-serif" font-size="11.5" font-weight="700" fill="#FFFFFF">STEP 3</text>
+    <circle cx="122" cy="27" r="14" fill="#FFFFFF" stroke="#24344D" stroke-width="1.6"/>
+    <text x="122" y="32" text-anchor="middle" font-size="14">🎙️</text>
+    <text x="147" y="23" font-size="12" fill="#F5B841">✦</text>
+    <text x="95" y="76" text-anchor="middle" font-family="'Microsoft YaHei',sans-serif" font-size="14.5" font-weight="700" fill="#24344D">干声工坊训练</text>
+    <text x="95" y="99" text-anchor="middle" font-family="'Microsoft YaHei',sans-serif" font-size="11.5" fill="#526580">RoFormer 提取 · 声纹体检</text>
+    <text x="95" y="118" text-anchor="middle" font-family="'Microsoft YaHei',sans-serif" font-size="11.5" fill="#526580">一键训练 RefineGAN 音色</text>
+  </g>
+
+  <!-- Arrow 3 -> 4 -->
+  <path d="M677 128 C688 118, 694 118, 702 128" stroke="#E8B44C" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="4 3"/>
+  <path d="M697 123 L704 128 L697 133" stroke="#E8B44C" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Card 4 -->
+  <g transform="translate(708, 62)" filter="url(#paperShadow)">
+    <rect width="182" height="136" rx="16" fill="#FDF5FF" stroke="#24344D" stroke-width="2"/>
+    <rect x="12" y="12" width="46" height="22" rx="11" fill="#8A63D2"/>
+    <text x="35" y="27" text-anchor="middle" font-family="sans-serif" font-size="11.5" font-weight="700" fill="#FFFFFF">STEP 4</text>
+    <rect x="70" y="14" width="98" height="26" rx="13" fill="#FFFFFF" stroke="#24344D" stroke-width="1.6"/>
+    <rect x="82" y="23" width="3" height="8" rx="1.5" fill="#3B7DD8"/>
+    <rect x="89" y="19" width="3" height="16" rx="1.5" fill="#3B7DD8"/>
+    <rect x="96" y="21" width="3" height="12" rx="1.5" fill="#F28B72"/>
+    <rect x="103" y="18" width="3" height="18" rx="1.5" fill="#F28B72"/>
+    <rect x="110" y="22" width="3" height="10" rx="1.5" fill="#F5B841"/>
+    <text x="142" y="31" text-anchor="middle" font-family="sans-serif" font-size="11" font-weight="700" fill="#24344D">58"</text>
+    <text x="91" y="76" text-anchor="middle" font-family="'Microsoft YaHei',sans-serif" font-size="14.5" font-weight="700" fill="#24344D">稳定交付群聊</text>
+    <text x="91" y="99" text-anchor="middle" font-family="'Microsoft YaHei',sans-serif" font-size="11.5" fill="#526580">黑胶单曲卡 + 副歌直出</text>
+    <text x="91" y="118" text-anchor="middle" font-family="'Microsoft YaHei',sans-serif" font-size="11.5" fill="#526580">QQ 语音专调 · 320k 下载</text>
+  </g>
+</svg>

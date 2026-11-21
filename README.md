@@ -1,246 +1,193 @@
 <div align="center">
-  <img src="assets/icon.png" width="96" alt="鲸歌">
-  <h1>鲸歌 · 麦麦翻唱插件</h1>
-  <p>让麦麦用指定音色翻唱点播歌曲，成品以语音条发送至群聊。</p>
+  <img src="assets/banner-plugin.webp" width="820" alt="麦弦 MaiChord">
+
+  <br>
+  <img src="assets/icon.png" width="76" alt="麦弦图标">
+  <h1>麦弦 (MaiChord)</h1>
+  <p>给 MaiBot 用的本地 AI 翻唱插件，带清唱猜歌和侧边栏调音台。</p>
+
+  <p>
+    <img src="https://img.shields.io/badge/Version-v0.2.0-3B7DD8?style=for-the-badge&labelColor=24344D" alt="Version v0.2.0">
+    <img src="https://img.shields.io/badge/MaiCore-1.4.6-4FA374?style=for-the-badge&labelColor=24344D" alt="MaiCore 1.4.6">
+    <img src="https://img.shields.io/badge/API-v0.3.0%2B-E87A64?style=for-the-badge&labelColor=24344D" alt="API v0.3.0+">
+    <img src="https://img.shields.io/badge/License-MIT-E8B44C?style=for-the-badge&labelColor=24344D" alt="MIT License">
+  </p>
+
+  <p>
+    <a href="https://allure-gui.github.io/feiyu-cover-plugin/" target="_blank">在线试听（《雨爱》）</a>
+    &nbsp;·&nbsp;
+    <a href="https://github.com/Allure-Gui/feiyu-cover-api">配套翻唱 API 仓库</a>
+    &nbsp;·&nbsp;
+    <a href="https://github.com/Allure-Gui/feiyu-cover-api/blob/main/TRAINING_GUIDE.md">部署与炼丹指南</a>
+    &nbsp;·&nbsp;
+    <a href="CHANGELOG.md">更新日志</a>
+  </p>
 </div>
 
 <p align="center">
-  🎧 <a href="https://allure-gui.github.io/feiyu-cover-plugin/" target="_blank"><b>点击试听示例：《雨爱》翻唱片段</b></a>
-  <br><sub>（点击后将在试听页中播放）</sub>
+  <img src="assets/wave-divider.svg" width="100%" alt="divider">
 </p>
 
----
+<div align="center">
+  <img src="assets/story-flow.svg" width="880" alt="麦弦工作流">
+</div>
 
-## ⚠️ 前置依赖：本插件需配合翻唱 API 使用
+<br>
 
-本插件**不包含**翻唱引擎与音色模型，仅承担「接收点歌 → 任务排队 → 获取成品 → 发送消息」的流程。翻唱能力由独立的 **feiyu-cover-api** 服务提供，**需另行部署**后方可使用。
+> [!NOTE]
+> 这个插件只跑在 MaiBot 这边，负责点歌、猜歌、排行榜、发语音和侧边栏界面。真正干活的人声分离、RVC 换声和训练在独立的 **[feiyu-cover-api](https://github.com/Allure-Gui/feiyu-cover-api)**（需要 `v0.3.0+`）里跑。
+>
+> - **有 8GB 以上 N 卡**：直接在自己电脑装 API 就行，平时不点歌显存占用是 **0 MB**，插件设置里打开「自动拉起本地服务」后用完也会自己退。
+> - **没独显 / 多台机器共用**：可以把 API 扔到远程 GPU 机器上，插件里填地址和密钥连过去。
 
-部署方式二选一：
+<p align="center">
+  <img src="assets/wave-divider.svg" width="100%" alt="divider">
+</p>
 
-| 方案 | 说明 | 适用场景 |
+## 能干嘛
+
+- **点歌翻唱**：群里或私聊直接喊「唱一首大鱼」「唱首雨爱」，或者用 `/翻唱 <歌名/BV号>`。等不及了可以直接喊取消。默认切全曲最好听的 **58 秒副歌**发语音条，顺带附一张黑胶单曲卡（自动读你麦麦的名字）。QQ 这边专门调了防忽大忽小的母带，Telegram 等其他平台保留 44.1kHz 高音质。
+- **清唱猜歌 & 群排行**：发 `/猜歌` 放 15 秒无伴奏清唱，群友用 `/猜 <歌名>` 抢答，答不上来就 `/揭晓答案`。猜中了马上解锁 58 秒带伴奏副歌，顺便给群里记分（一次猜中 +3、二次 +2、多次 +1，按群分开存），发 `/猜歌排行榜` 出 TOP 5 榜单图。本地还没缓存过歌的话，会自动从热歌池现学一首，大概 15~20 秒开局。
+- **侧边栏「麦弦」工作室**：
+  - **音色路由**：切模型、存预设、调变调/贴合度/辅音保护，支持直接导入外面 RVC WebUI 或 Applio 导出的 `.pth` / `.zip` 模型；右边能看显存占用、手动释放显存和清缓存。
+  - **试听工坊**：直接搜多平台音源选版本，支持 **60 秒极速试听**，听满意了点一下「应用到路由」，也能存本地 320k MP3 或直接推到指定群聊。
+  - **干声工坊**：输入歌名、BV 号或本地路径就能用 RoFormer 提干声，做完可以跑个声纹体检和一键去静音，达标了直接后台训练（支持 RefineGAN 32k 和 HiFi-GAN 40k，最高 800 轮）。
+- **杂项细节**：设置页里可以单独关掉猜歌或桌宠联动，也能按群聊/私聊配黑白名单。多平台（QQ OneBot / QQ 官方 / Telegram / 微信 ClawBot / 内置聊天）都测过兼容。
+
+<p align="center">
+  <img src="assets/wave-divider.svg" width="100%" alt="divider">
+</p>
+
+## 安装和配置
+
+### 1. 装插件
+- **下压缩包**：去 [Releases](https://github.com/Allure-Gui/feiyu-cover-plugin/releases) 下最新版源码包，解压到 MaiBot 的 `plugins/` 目录，文件夹改名叫 **`feiyu_cover`**，进插件管理刷新启用。
+- **用 Git**：
+  ```bash
+  cd <MaiBot根目录>/plugins
+  git clone https://github.com/Allure-Gui/feiyu-cover-plugin.git feiyu_cover
+  ```
+- **插件市场**：在 MaiBot 插件市场搜 **麦弦** 安装。
+
+> [!TIP]
+> 覆盖更新的时候留好原来的 `config.toml` 和 `data/plugins/feiyu.voice-cover/` 目录，里面存着你的音色预设、路由设置和猜歌积分。另外 `plugins/` 下面别留两份副本，不然会报插件 ID 冲突。
+
+### 2. 连上翻唱 API
+打开 MaiBot WebUI → **插件 → 麦弦设置**：
+1. `服务地址` 默认就是 `http://127.0.0.1:19655`（连远程就改这里，顺便填上两边一致的 `访问密钥`）。
+2. API 装在本机的话，把 **`自动拉起本地服务`** 和 **`卸载时自动关闭`** 打开，**`API 文件夹路径`** 填你放 `feiyu-cover-api` 的目录（比如 `D:\feiyu-cover-api`，不填也会自己找常见路径）。
+3. 玩法开关和黑白名单按自己群里的情况调。
+4. 点右上角 **保存**，再点设置页顶上的 **「一键检测 / 拉起服务」**，看到状态变绿就通了。
+
+> Windows 下不用自己折腾 `wsl.exe` 启动命令，插件会自动识别原生一键包（`runtime/service-venv`）或者本机的 WSL2 发行版，卸载插件时也会顺手把拉起的服务关干净。
+
+### 3. 选音色
+点左侧边栏 **「麦弦」**：
+- **音色路由**：选一个模型（或者点旁边的「导入模型」把自己现成的 `.pth` / `.zip` 导进来），打开「智能变调」，点「保存并生效」就行。
+- **试听工坊**：搜首歌开「极速试听（60秒）」听听效果，满意就点「应用到路由」。
+- **干声工坊**：想自己练声音的话，在这里提干声、体检、开训一条龙。
+
+<p align="center">
+  <img src="assets/wave-divider.svg" width="100%" alt="divider">
+</p>
+
+## 速度和常用参数
+
+### 实测耗时（搭配 API `v0.3.0` + Mel-Band RoFormer）
+
+| 机器情况 | 首次整曲（3~4 分钟） | 60 秒试听 / 现学猜歌 | 复用分离缓存换音色 |
+|---|---|---|---|
+| **NVIDIA 8GB 显卡（比如 RTX 4060 Ti）** | 30 ~ 45 秒 | 15 ~ 20 秒 | 5 ~ 10 秒 |
+| **纯 CPU** | 5 ~ 20 分钟 | 2 ~ 6 分钟 | 2 ~ 5 分钟 |
+| **远程 GPU 服务器** | 30 ~ 45 秒 + 上传下载 | 15 ~ 20 秒 + 上传下载 | 5 ~ 10 秒 + 上传下载 |
+
+### 我自己常用的调音参数
+
+| 参数 | 干嘛用的 | 建议值 |
 |---|---|---|
-| **本地 API** | 于麦麦所在机器（WSL / Linux）部署 [feiyu-cover-api](https://github.com/Allure-Gui/feiyu-cover-api) | 本机配有 NVIDIA 显卡 |
-| **远程 API** | 将 API 部署于配有显卡的服务器，插件通过 `api_base` 连接 | 本机无显卡 / 多实例共用 |
+| **智能变调 (`auto_pitch`)** | 自动看模型舒适音域和原唱高音来选半音，伴奏跟着移调 | **打开**（开着时手动滑块会锁灰，想手调就关掉它） |
+| **音色贴合 (`index_rate`)** | 越高越像训练原声，太高容易带电音 | `RefineGAN`：`0.50 ~ 0.65`；`HiFi-GAN`：`0.25 ~ 0.35` |
+| **辅音保护 (`protect`)** | 护住咬字和气口，防止吞字或刺耳 | **`0.45`** |
+| **音量包络 (`volume_envelope`)** | 越小越跟着原唱的强弱起伏，太大容易把底噪放大 | **`0.25`** |
+| **基频算法 (`f0_method`)** | 提取原唱音高曲线 | **`rmvpe`** |
+| **人声空间混响 (`vocal_reverb`)** | 给干声加一点点房间感，不然贴在伴奏上很生硬 | **打开** |
+| **共振峰偏移 (`formant_shifting`)** | 调声音厚薄，但多一步重采样会损一点清晰度 | 默认 **关闭** |
 
-> 若未部署 API 服务，点歌将返回明确的「翻唱服务连接不可用」提示，不会静默失败。请先参照 [API 仓库文档](https://github.com/Allure-Gui/feiyu-cover-api) 完成服务部署。
+<details>
+<summary><b>config.toml 配置项 & 对接的 API 接口列表</b></summary>
 
-### 自动拉起服务（可选）
+<br>
 
-若希望点歌时插件自动启动 API（无需手动开服务），可在 `config.toml` 的 `[cover]` 段配置：
-
-```toml
-auto_start_api = true
-api_start_cmd = "wsl.exe -d Ubuntu-24.04 -- bash /mnt/g/feiyu-cover/install/start-api.wsl.sh"
-```
-
-- `auto_start_api`：开启后，服务离线时插件会执行启动命令并等待就绪（最多 30 秒）
-- `api_start_cmd`：启动命令，按你自己的环境填写；**留空则不会自动拉起**，只给出连接不可用提示
-- 命令由你自己填写并以当前用户权限执行，等价于你手动运行该命令；请只填可信的启动脚本
-- 上述命令以 WSL 部署为例；其他环境（如 Linux 本机、远程服务器）填对应的启动命令即可
-
-> 若服务本就在线，不会重复启动；启动失败或服务 30 秒内未就绪，点歌会返回明确的失败原因。插件**加载 / 重载时也会按此配置自动拉起服务**（后台执行，不阻塞加载）。上面的 `start-api.wsl.sh` 是示例，需按你的实际部署路径编写一个**幂等启动脚本**（服务已在线时直接退出、否则后台启动 uvicorn），API 仓库文档可找到参考。
-
-同理可让插件卸载时自动关闭服务：
-
-```toml
-auto_stop_api = true
-api_stop_cmd = "wsl.exe -d Ubuntu-24.04 -- bash /mnt/g/feiyu-cover/install/stop-api.wsl.sh"
-```
-
-> **只关闭「由本插件自动拉起」的服务**（插件会记录标记）。若服务是你手动启动的，插件卸载时不会动它，避免误杀共享服务。
-
-### 硬件要求说明
-
-| 环节 | 是否必需显卡 | 说明 |
-|---|---|---|
-| **翻唱推理**（日常点歌） | 否 | CPU 可执行，速度较慢；配备显卡可显著提升速度 |
-| **音色模型训练** | 是 | 训练依赖 NVIDIA 显卡，CPU 训练不具备实用价值 |
-
-即：无显卡环境可通过 CPU 推理或连接远程 API 使用本插件；如需自行训练音色模型，则需配备 NVIDIA 显卡。
-
-### 推理速度参考
-
-以下为一首 3~4 分钟歌曲的经验估值，仅供参考，实际耗时因硬件配置、歌曲长度与模型而异：
-
-| 硬件 | 推理耗时 | 说明 |
-|---|---|---|
-| NVIDIA 显卡（如 4060Ti 8GB） | 约 40~90 秒 | 等待时间短 |
-| CPU（多核，无显卡） | 约 5~20 分钟 | 可正常使用，但耗时较长 |
-| 远程显卡服务器 | 40~90 秒 + 网络传输 | 本机无显卡时适用 |
-
-> 模型训练耗时为小时至天级，不在上表范围内。
-
----
-
-## 功能
-
-| 能力 | 说明 |
-|---|---|
-| 自然语言点歌 | 「用你的声音唱首起风了」 |
-| 命令点歌 | `/翻唱 起风了` |
-| 多音色切换 | 侧边栏可切换不同训练轮次 / 模型的音色 |
-| 试听工作台 | 独立参数副本，生成前先试听，不影响群里正在用的配置 |
-| 参数面板 | 变调、贴合度、保护度、包络、共振峰等实时可调 |
-| 播放器 | 原生音频控件，支持调速与下载（下载时可自选保存位置） |
-| 语音条发送 | 按 60 秒切片，最多发 2 段（可在代码中调整） |
-| B 站二创音源 | 「司凤版」等鬼畜 / 二创视频走 B 站音频流，不再误搜到伴奏 |
-
----
-
-## 下载与安装
-
-### 方式一：从 GitHub 下载（推荐）
-
-1. 打开本仓库 [Releases 页面](https://github.com/Allure-Gui/feiyu-cover-plugin/releases)，下载最新版本的 **Source code (zip)**
-2. 解压后，把整个目录放到麦麦的 `plugins/` 下，**目录名改为 `feiyu_cover`**（下划线）
-3. 麦麦 WebUI → 插件管理 → 刷新 → 启用「鲸歌」
-4. 首次启用会自动生成 `config.toml`，按需修改 `api_base`
-
-也可直接克隆：
-
-```bash
-cd <麦麦目录>/plugins
-git clone https://github.com/Allure-Gui/feiyu-cover-plugin.git feiyu_cover
-```
-
-### 方式二：从麦麦插件市场安装
-
-在麦麦 WebUI 的插件市场搜索「鲸歌」安装（需插件已被市场收录）。
-
-### 更新插件
-
-- **Git 用户**：进入 `plugins/feiyu_cover` 执行 `git pull`，然后重启麦麦
-- **手动用户**：用新版本的文件覆盖旧目录（**不要删除** `config.toml` 和运行时数据目录），然后重启麦麦
-- ⚠️ 插件代码是 Python 模块，改动后必须**重启麦麦 / 重载插件**才会生效
-
-> **备份提醒**：不要在本插件目录的父级（`plugins/`）里放置同名插件的备份副本，否则会因插件 ID 重复导致加载失败。备份请放到其他目录。
-
----
-
-## 前置依赖
-
-- 麦麦宿主 SDK ≥ 2.13.0
-- Python 包：`httpx`（由 manifest 声明，宿主自动安装）
-- **翻唱 API**（本地或远程二选一）—— 本仓库不含该服务，需另行部署 [feiyu-cover-api](https://github.com/Allure-Gui/feiyu-cover-api)
-  - **本地**：部署在同一台机器的 WSL / Linux 上（默认 `http://127.0.0.1:19655`），延迟低、无需公网
-  - **远程**：部署在另一台有显卡的服务器上，插件通过 `api_base` 连过去；适合本机没显卡、或多人共用一套音色
-
-API 需提供这些接口：
-
-```
-GET  /models                     列出可用音色
-POST /cover                      提交翻唱任务
-GET  /jobs/{id}                  查询任务状态
-GET  /jobs/{id}/voice-info       返回可切分语音条的数量
-GET  /jobs/{id}/voice-part/{i}   第 i 段语音音频
-GET  /jobs/{id}/audio            完整成品音频
-```
-
----
-
-## 配置
-
-首次启用生成的 `config.toml` 示例见 [`config.example.toml`](config.example.toml)：
+#### `config.toml`（样例看 [`config.example.toml`](config.example.toml)）
 
 | 配置项 | 默认值 | 说明 |
 |---|---|---|
-| `enabled` | `true` | 总开关 |
-| `api_base` | `http://127.0.0.1:19655` | 翻唱 API 地址，本地填 `127.0.0.1`，远程填服务器地址（如 `http://192.168.1.10:19655` 或 `https://your-domain.com`） |
-| `api_key` | 空 | 与 API 端 `config.json` 的 `api_key` 一致，没设就留空；**远程部署强烈建议设置** |
-| `cooldown_seconds` | `600` | 同一用户两次点歌的最短间隔 |
-| `poll_interval` | `10` | 轮询进度间隔（秒） |
-| `max_wait_seconds` | `1800` | 单任务最长等待 |
-| `notify_progress` | `true` | 接单时是否在群里回一句 |
-| `bot_name` | 空 | 回复里的自称；留空自动取机器人昵称 |
+| `[plugin].enabled` | `true` | 插件开关 |
+| `[cover].api_base` | `http://127.0.0.1:19655` | API 地址 |
+| `[cover].api_key` | 空 | Bearer 密钥（连远程建议填） |
+| `[cover].auto_start_api` | `false` | 离线时自动后台拉起本地 API |
+| `[cover].api_dir` | 空 | 本地 `feiyu-cover-api` 目录，留空自动找 |
+| `[cover].api_runtime` | `auto` | `auto`（自动）/ `wsl` / `local` |
+| `[cover].auto_stop_api` | `false` | 插件卸载时关掉自己拉起的服务 |
+| `[cover].deliver_mode` | `highlight` | `highlight`（58秒副歌）/ `two_parts`（前两段×60秒） |
+| `[cover].send_cover_card` | `true` | 唱完附带黑胶单曲卡 |
+| `[cover].cooldown_seconds` | `600` | 同一个人点歌冷却（秒） |
+| `[cover].poll_interval` | `10` | 轮询任务间隔（秒） |
+| `[cover].max_wait_seconds` | `1800` | 最长等待（秒） |
+| `[cover].notify_progress` | `true` | 接单时在群里回一句提示 |
+| `[cover].cache_deliver_delay` | `3` | 命中缓存时稍等几秒再发，显得自然点 |
+| `[cover].api_start_cmd` / `api_stop_cmd` | 空 | *(隐藏高级项)* 需要完全自定义启停命令时才用 |
+| `[features].enable_quiz` | `true` | 开/关清唱猜歌和排行榜 |
+| `[features].enable_desktop_pet` | `true` | 开/关桌宠联动 |
+| `[scope].allow_group` / `allow_private` | `true` / `true` | 群聊 / 私聊总开关 |
+| `[scope].group_list_mode` / `group_list` | `off` / 空 | 群聊不限制 / 白名单 / 黑名单 |
+| `[scope].private_list_mode` / `private_list` | `off` / 空 | 私聊不限制 / 白名单 / 黑名单 |
 
-> `config.toml` 已在 `.gitignore` 中，不会被提交到仓库。
+> 路由参数、预设和猜歌积分都在 `data/plugins/feiyu.voice-cover/` 下面（`voice.json`、`voice_presets.json`、`quiz_scores.json`）。
 
-### 本地还是远程？
+#### 调用的 API 接口（`feiyu-cover-api >= v0.3.0`）
 
-| | 本地 API | 远程 API |
-|---|---|---|
-| 部署位置 | 麦麦同一台机器的 WSL / Linux | 另一台有 NVIDIA 显卡的服务器 |
-| `api_base` | `http://127.0.0.1:19655` | `http://服务器IP:19655` 或 `https://域名` |
-| 适合场景 | 家里有显卡、单人用 | 本机没显卡、多台麦麦共用、想随时可用 |
-| 网络要求 | 无 | 麦麦所在机器能访问服务器 19655 端口 |
-| 延迟 | 最低 | 取决于网络，生成本身要几十秒，延迟影响不大 |
+```text
+GET  /health                     健康检查
+GET  /models                     可用模型列表
+POST /models/import              本机路径导入外部 .pth / .zip / 文件夹
+POST /models/upload              浏览器拖拽上传外部模型
+GET  /models/import-page         外部模型拖拽上传页
+GET  /sources/search             多平台搜歌
+POST /cover                      提交翻唱任务
+GET  /jobs/{id}                  查进度
+POST /jobs/{id}/cancel           取消任务
+GET  /jobs/{id}/voice-info       查分段数
+GET  /jobs/{id}/voice-part/{i}   下载第 i 段语音（支持 for_qq=1）
+GET  /jobs/{id}/highlight        58 秒副歌 / 15 秒清唱（vocals_only=1 / for_qq=1）
+GET  /jobs/{id}/audio            下载完整 320k MP3
+GET  /system/status              GPU 显存与 RVC 状态
+POST /system/unload              释放 RVC 显存
+GET  /cache/stats                缓存统计
+POST /cache/clean                清理缓存
+GET  /studio                     干声工坊上传页
+GET  /studio/status              干声工坊状态与素材库
+POST /studio/inspect             素材声纹体检
+POST /studio/clean               无损去静音
+POST /studio/separate            后台提干声
+POST /studio/train               后台训练音色
+POST /studio/cancel              停止当前工坊任务
+```
 
-远程部署要点：
+</details>
 
-1. 在服务器上按 [feiyu-cover-api](https://github.com/Allure-Gui/feiyu-cover-api) 文档部署并启动，确保 `0.0.0.0:19655` 可访问
-2. 在 API 端 `config.json` 设置一个 `api_key`，插件端 `config.toml` 填同样的值（插件会以 Bearer 方式带上）
-3. 用防火墙只放行可信来源；若要走公网，建议套一层反向代理 + HTTPS
-4. 把插件的 `api_base` 改成服务器地址，重启麦麦即可
+<details>
+<summary><b>说明与致谢</b></summary>
 
-> 远程模式下，翻唱在服务器上跑，模型也放在服务器；插件和麦麦所在机器不需要显卡。
+<br>
 
----
+- **限制**：聊天软件语音条有 60 秒限制，所以群里默认发 58 秒副歌（想听整首可以在试听工坊下 320k MP3）；8GB 显卡下服务端串行排队，不会爆显存。
+- **依赖**：仓库里不带任何版权音频和模型权重，插件这边只用到 [MaiBot SDK](https://github.com/MaiM-with-u/MaiBot) 和 [httpx](https://github.com/encode/httpx)，音频处理靠 API 端调用 [Applio](https://github.com/IAHispano/Applio)、[python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) 和 [FFmpeg](https://ffmpeg.org/)。
+- **美术**：图标、横幅和流程图里的角色基于 MaiBot 官方形象绘制，仅用于本开源项目。
 
-## 用法
+</details>
 
-| 方式 | 例子 |
-|---|---|
-| 自然语言 | 「用你的声音唱首起风了」 |
-| 命令 | `/翻唱 起风了` |
-| 指定版本 | 「唱一下雨爱司凤版」（走 B 站二创音源） |
-| 试听 | 侧边栏「鲸歌」→ 试听工作台 → 填歌名、调参数、生成并试听 |
-| 查进度 | 「唱好了吗」 |
-| 取消 | 「别唱了」 |
-
-### 试听工作台
-
-- **语音路由**页的参数是真正生效的配置；**试听工作台**的参数是独立副本，怎么调都不影响群里点歌
-- 调好后点「生成并试听」，播放器支持播放速度调节与下载
-- 想正式启用试听出的音色：在试听页记下参数 → 回语音路由页调成一样 → 「保存路由」
-
-### 音色参数
-
-| 参数 | 作用 | 推荐 |
-|---|---|---|
-| 变调 pitch | 整体升降调 | 男声原曲改女声填 `12`，其余留 `0` |
-| 贴合 index_rate | 音色特征的贴合强度 | `0.3 ~ 0.5`，过高会有金属音 |
-| 保护 protect | 保护清辅音不被带偏 | `0.25 ~ 0.4` |
-| 包络 volume_envelope | 音量起伏跟随原唱的程度 | `0.25 ~ 0.8` |
-| 共振峰 qfrency | 音色性别感微调 | `1.0` 附近最自然 |
-| 基频算法 f0_method | 提取原唱音高 | `rmvpe`（最稳）；`fcpe` 更快 |
-
----
-
-## 已知限制
-
-- 语音条有 60 秒上限，默认只发前 2 分钟
-- 生成一首歌约需 40~90 秒（取决于 GPU），插件靠轮询等待
-- 找不到原唱时会用翻唱音频兜底，并在群里说明
-- 音质上限由训练素材决定（例如 24kHz 素材训练的模型高频偏闷）
-- B 站音源依赖公开接口，可能受平台风控影响；失败时会自动回退音乐平台
-
----
-
-## 第三方组件与引用声明
-
-本项目**不包含任何受版权保护的音频素材、模型权重或商业音源**，仅声明所依赖的开源项目与公开接口：
-
-| 组件 / 服务 | 用途 | 许可 / 来源 |
-|---|---|---|
-| [MaiBot SDK](https://github.com/MaiM-with-u/MaiBot) | 插件运行时框架 | 见上游仓库许可 |
-| [Applio](https://github.com/IAHispano/Applio) | RVC 换声（由 API 端调用） | MIT（见上游） |
-| [Demucs](https://github.com/facebookresearch/demucs) | 人声分离（由 API 端调用） | MIT（见上游） |
-| [httpx](https://github.com/encode/httpx) | HTTP 客户端 | BSD-3-Clause |
-| 音乐平台公开搜索接口 | 原曲搜索（由 API 端调用） | 各平台服务条款，请自行合规使用 |
-| 哔哩哔哩公开 Web API | 二创视频音频解析（由 API 端调用） | 哔哩哔哩服务条款，仅供个人技术研究 |
-
-### 图标声明
-
-`assets/icon.png` 与 `webui/icon.png` 为二次元插画，**原始出处未能确认**，仅作本非商业项目的插件标识。如权利人认为使用不当，请通过 [Issues](https://github.com/Allure-Gui/feiyu-cover-plugin/issues) 联系，将立即删除或更换。
-
-> 该声明不构成授权或免责，使用者请自行判断；可自行替换这两个 PNG 文件。
-
-- 除上述图标外，仓库不含其他第三方图片、音频或模型素材。
-- 模型权重不在本仓库内；如需使用，请自行训练或从合法渠道获取。
-- 用户通过本插件翻唱、分发歌曲时，请自行确保遵守当地版权法规。
-
----
-
-## 许可
-
-MIT — 详见 [LICENSE](LICENSE)。
+<p align="center">
+  <img src="assets/wave-divider.svg" width="100%" alt="divider">
+  <sub>MIT License — 详见 <a href="LICENSE">LICENSE</a></sub>
+</p>

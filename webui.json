@@ -6,8 +6,8 @@
   "pages": [
     {
       "id": "studio",
-      "title": "鲸歌",
-      "description": "音色工作室：调参、试听与发送",
+      "title": "麦弦",
+      "description": "麦弦声学工作室：音色路由、试听与干声训练",
       "placement": "sidebar",
       "icon": "puzzle",
       "mode": "custom",
@@ -16,6 +16,47 @@
       "queries": {
         "state": {
           "api": "jingge_state"
+        },
+        "system": {
+          "api": "jingge_system",
+          "parameters": {
+            "refresh": {
+              "type": "boolean",
+              "required": false
+            }
+          }
+        },
+        "search": {
+          "api": "jingge_search",
+          "parameters": {
+            "keyword": {
+              "type": "string",
+              "required": true,
+              "max_length": 200
+            },
+            "limit": {
+              "type": "integer",
+              "required": false,
+              "minimum": 1,
+              "maximum": 15
+            },
+            "source_hint": {
+              "type": "string",
+              "required": false,
+              "max_length": 20
+            }
+          }
+        },
+        "jobs": {
+          "api": "jingge_jobs",
+          "parameters": {
+            "limit": {
+              "type": "integer",
+              "required": false,
+              "minimum": 1,
+              "maximum": 30
+            }
+          }
         },
         "sessions": {
           "api": "jingge_sessions",
@@ -36,8 +77,33 @@
             }
           }
         },
+        "voiceInfo": {
+          "api": "jingge_voice_info",
+          "parameters": {
+            "job_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 64
+            },
+            "seconds": {
+              "type": "integer",
+              "required": false,
+              "minimum": 15,
+              "maximum": 120
+            }
+          }
+        },
         "models": {
           "api": "jingge_models"
+        },
+        "presetList": {
+          "api": "jingge_preset_list"
+        },
+        "cacheStats": {
+          "api": "jingge_cache_stats"
+        },
+        "studioStatus": {
+          "api": "jingge_studio_status"
         },
         "audio": {
           "api": "jingge_audio",
@@ -82,6 +148,35 @@
         "recheck": {
           "api": "jingge_recheck"
         },
+        "unload": {
+          "api": "jingge_unload"
+        },
+        "cancel": {
+          "api": "jingge_cancel",
+          "parameters": {
+            "job_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 64
+            }
+          }
+        },
+        "cacheClean": {
+          "api": "jingge_cache_clean",
+          "parameters": {
+            "force": { "type": "boolean", "required": false }
+          }
+        },
+        "cacheConfig": {
+          "api": "jingge_cache_config",
+          "parameters": {
+            "enabled": { "type": "boolean", "required": false },
+            "max_age_days": { "type": "integer", "required": true, "minimum": 0, "maximum": 3650 },
+            "max_size_mb": { "type": "integer", "required": true, "minimum": 0, "maximum": 102400 },
+            "keep_jobs": { "type": "integer", "required": true, "minimum": 0, "maximum": 10000 },
+            "check_interval_hours": { "type": "integer", "required": false }
+          }
+        },
         "save": {
           "api": "jingge_save",
           "parameters": {
@@ -89,6 +184,41 @@
               "type": "string",
               "required": true,
               "max_length": 65536
+            }
+          }
+        },
+        "presetSave": {
+          "api": "jingge_preset_save",
+          "parameters": {
+            "name": {
+              "type": "string",
+              "required": true,
+              "max_length": 40
+            },
+            "payload": {
+              "type": "string",
+              "required": true,
+              "max_length": 65536
+            }
+          }
+        },
+        "presetLoad": {
+          "api": "jingge_preset_load",
+          "parameters": {
+            "name": {
+              "type": "string",
+              "required": true,
+              "max_length": 40
+            }
+          }
+        },
+        "presetDelete": {
+          "api": "jingge_preset_delete",
+          "parameters": {
+            "name": {
+              "type": "string",
+              "required": true,
+              "max_length": 40
             }
           }
         },
@@ -117,11 +247,15 @@
             },
             "group_id": {
               "type": "string",
-              "max_length": 64
+              "max_length": 200
             },
             "user_id": {
               "type": "string",
-              "max_length": 64
+              "max_length": 200
+            },
+            "platform": {
+              "type": "string",
+              "max_length": 40
             }
           }
         },
@@ -149,6 +283,96 @@
               "max_length": 1024
             }
           }
+        },
+        "studioSeparate": {
+          "api": "jingge_studio_separate",
+          "parameters": {
+            "dataset": {
+              "type": "string",
+              "required": true,
+              "max_length": 48
+            },
+            "source": {
+              "type": "string",
+              "required": true,
+              "max_length": 1024
+            }
+          }
+        },
+        "studioTrain": {
+          "api": "jingge_studio_train",
+          "parameters": {
+            "model_name": {
+              "type": "string",
+              "required": true,
+              "max_length": 48
+            },
+            "dataset": {
+              "type": "string",
+              "required": true,
+              "max_length": 1024
+            },
+            "profile": {
+              "type": "string",
+              "required": false,
+              "choices": ["refinegan", "hifigan"]
+            },
+            "epochs": {
+              "type": "integer",
+              "required": false,
+              "minimum": 20,
+              "maximum": 800
+            },
+            "batch_size": {
+              "type": "integer",
+              "required": false,
+              "minimum": 1,
+              "maximum": 16
+            }
+          }
+        },
+        "modelImport": {
+          "api": "jingge_model_import",
+          "parameters": {
+            "model_name": {
+              "type": "string",
+              "required": false,
+              "max_length": 48
+            },
+            "pth_path": {
+              "type": "string",
+              "required": true,
+              "max_length": 1024
+            },
+            "index_path": {
+              "type": "string",
+              "required": false,
+              "max_length": 1024
+            }
+          }
+        },
+        "studioInspect": {
+          "api": "jingge_studio_inspect",
+          "parameters": {
+            "dataset": {
+              "type": "string",
+              "required": true,
+              "max_length": 1024
+            }
+          }
+        },
+        "studioClean": {
+          "api": "jingge_studio_clean",
+          "parameters": {
+            "dataset": {
+              "type": "string",
+              "required": true,
+              "max_length": 1024
+            }
+          }
+        },
+        "studioCancel": {
+          "api": "jingge_studio_cancel"
         }
       }
     }

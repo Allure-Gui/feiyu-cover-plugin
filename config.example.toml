@@ -3,18 +3,29 @@ enabled = true
 config_version = "0.1.0"
 
 [cover]
+# 翻唱 API 地址：本机保持默认；远程显卡服务器填 http://服务器IP:19655
 api_base = "http://127.0.0.1:19655"
 api_key = ""
-# 服务连不上时是否自动执行「启动命令」拉起 API（默认关闭）
+
+# 零命令自动拉起本地服务（无需手写启动/停止命令！）
 auto_start_api = false
-# 启动 API 的命令；WSL 示例：wsl.exe -d Ubuntu-24.04 -- bash /mnt/g/feiyu-cover/install/start-api.wsl.sh
-# 留空则不会自动拉起，服务离线时会给出「连接不可用」提示
-api_start_cmd = ""
-# 插件卸载时是否关闭 API（仅关闭此前由本插件自动拉起的服务）
+# 只需粘贴 feiyu-cover-api 文件夹路径（如 G:\feiyu-cover 或 ~/feiyu-cover-api）；留空自动探测
+api_dir = ""
+# 运行环境："自动识别（推荐）" | "Windows WSL2" | "本机直接运行"
+api_runtime = "自动识别（推荐）"
+# 插件卸载时自动关闭由本插件拉起的服务（不影响手动启动的服务）
 auto_stop_api = false
-# 关闭 API 的命令；WSL 示例：wsl.exe -d Ubuntu-24.04 -- bash /mnt/g/feiyu-cover/install/stop-api.wsl.sh
-api_stop_cmd = ""
+
+# 群聊点歌策略
+# 群聊发歌模式："副歌高潮直出（58秒·推荐）" | "从头分段发送（前2段×60秒）"
+deliver_mode = "副歌高潮直出（58秒·推荐）"
+send_song_card = true        # 唱完附带精致黑胶单曲卡（宿主渲染不可用时自动跳过）
 cooldown_seconds = 600
 poll_interval = 10
 max_wait_seconds = 1800
 notify_progress = true
+cache_deliver_delay = 3
+
+# （可选进阶）如需完全自定义启动/停止 shell 命令，可取消注释填写；留空由上方「API 文件夹路径」自动处理
+# api_start_cmd = ""
+# api_stop_cmd = ""
