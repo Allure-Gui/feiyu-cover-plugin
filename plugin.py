@@ -26,6 +26,8 @@ import shutil
 import subprocess
 import sys
 import time
+import threading
+import uuid
 from pathlib import Path
 from typing import Any, ClassVar, Iterable, Literal
 from urllib.parse import urlparse
@@ -86,7 +88,7 @@ class CoverSection(PluginConfigBase):
         },
     )
     auto_start_api: bool = Field(
-        default=False,
+        default=True,
         description="服务未启动时自动在后台拉起，无需手写启动命令",
         json_schema_extra={"label": "自动拉起本地服务"},
     )
@@ -104,8 +106,8 @@ class CoverSection(PluginConfigBase):
         json_schema_extra={"label": "本地运行环境"},
     )
     auto_stop_api: bool = Field(
-        default=False,
-        description="插件卸载时自动关闭由本插件拉起的服务（不影响手动启动的服务，无需手写停止命令）",
+        default=True,
+        description="卸载时关闭绑定项目和端口的本地 API，包括升级前启动的实例；共享服务请关闭此项",
         json_schema_extra={"label": "卸载时自动关闭"},
     )
     # 兼容旧版与进阶用户：在 config.toml 中手写自定义命令时优先生效，配置页默认隐藏不打扰新手
@@ -321,6 +323,13 @@ class FeiyuCoverPlugin(MaiBotPlugin):
         # 必须调用基类构造：self.config 依赖它初始化的 _plugin_config_data / _plugin_config_instance
         super().__init__()
         self._tasks: set[asyncio.Task] = set()
+        self._audio_lock = asyncio.Lock()
+        self._audio_cache = {}
+        self._source_uploads: dict[str, dict[str, Any]] = {}
+        self._audio_fill = None
+        self._native_save_lock = threading.Lock()
+        self._native_save_active: dict[str, Any] | None = None
+        self._native_save_states: dict[str, dict[str, Any]] = {}
         self._pending: dict[str, dict[str, Any]] = {}
         self._cooldown: dict[str, float] = {}
         self._state_file: Path | None = None
@@ -329,6 +338,7 @@ class FeiyuCoverPlugin(MaiBotPlugin):
         self._started_flag: Path | None = None  # 标记「服务由本插件拉起」的文件
         self._starting: bool = False  # 是否正在自动拉起服务（供 WebUI 显示状态）
         self._last_start_error: str = ""
+        self._unloading = False
         self._start_lock: asyncio.Lock | None = None
         self._bg_proc: subprocess.Popen[bytes] | None = None
         self._wsl_distro_cache: str | None = None
@@ -441,11 +451,16 @@ class FeiyuCoverPlugin(MaiBotPlugin):
     # ------------------------------------------------ 零命令本地服务自动拉起/关闭
     def _api_port(self) -> int:
         parsed = urlparse((self.config.cover.api_base or "http://127.0.0.1:19655").strip())
-        return parsed.port or 19655
+        return parsed.port or (443 if parsed.scheme == "https" else 80)
 
     def _is_local_api(self) -> bool:
-        host = (urlparse((self.config.cover.api_base or "").strip()).hostname or "").lower()
-        return host in ("", "127.0.0.1", "localhost", "::1", "0.0.0.0")
+        try:
+            url = urlparse((self.config.cover.api_base or "").strip())
+            return (url.scheme in ("http", "https") and url.hostname in ("localhost", "127.0.0.1", "::1")
+                    and url.username is None and url.password is None and url.port != 0
+                    and url.path in ("", "/") and not url.query and not url.fragment)
+        except ValueError:
+            return False
 
     @staticmethod
     def _win_to_wsl_path(raw: str) -> str:
@@ -485,7 +500,7 @@ class FeiyuCoverPlugin(MaiBotPlugin):
         """返回用户配置的 API 目录，或自动探测本机常见路径。"""
         configured = (self.config.cover.api_dir or "").strip().strip('"').strip("'")
         if configured:
-            return configured
+            return os.path.expanduser(configured) if os.name != "nt" else configured
         if not self._is_local_api():
             return ""
         candidates: list[Path] = []
@@ -506,6 +521,8 @@ class FeiyuCoverPlugin(MaiBotPlugin):
         return ""
 
     def _can_auto_start(self, *, ignore_switch: bool = False) -> bool:
+        if self._unloading or not self._is_local_api():
+            return False
         if not ignore_switch and not self.config.cover.auto_start_api:
             return False
         if (self.config.cover.api_start_cmd or "").strip():
@@ -574,21 +591,21 @@ class FeiyuCoverPlugin(MaiBotPlugin):
         ])
         return "\n".join(lines) + "\n"
 
-    def _terminate_bg_proc(self) -> None:
-        proc = self._bg_proc
-        self._bg_proc = None
-        if proc is not None and proc.poll() is None:
-            with contextlib.suppress(OSError):
-                proc.terminate()
-            with contextlib.suppress(Exception):
-                proc.wait(timeout=3.0)
-            if proc.poll() is None:
-                with contextlib.suppress(OSError):
-                    proc.kill()
+    def _use_wsl(self, directory: str) -> bool:
+        runtime = self.config.cover.api_runtime.lower()
+        if os.name != "nt" or runtime in ("local", "本机直接运行"):
+            return False
+        return "wsl" in runtime or not any(
+            directory and (Path(directory) / folder / "Scripts/python.exe").is_file()
+            for folder in ("runtime/service-venv", ".venv")
+        )
 
     async def _start_api(self) -> tuple[bool, str]:
         """自动拉起翻唱 API 并等待就绪（防重入、零引号问题、WSL2 保活、秒级报错）。"""
         async with self._get_start_lock():
+            if self._unloading or not self._is_local_api():
+                self._starting = False
+                return False, "只在插件启用期间管理本地 API"
             if await self._health_ok(timeout=1.5):
                 self._starting = False
                 self._last_start_error = ""
@@ -620,31 +637,11 @@ class FeiyuCoverPlugin(MaiBotPlugin):
                         return False, msg
                 else:
                     api_dir = self._discover_api_dir()
-                    runtime_raw = (self.config.cover.api_runtime or "").strip()
-                    runtime = (
-                        "wsl" if ("wsl" in runtime_raw.lower())
-                        else ("local" if runtime_raw in ("local", "本机直接运行") else "auto")
-                    )
                     port = self._api_port()
-                    use_wsl = False
-                    if os.name == "nt":
-                        if runtime == "wsl":
-                            use_wsl = True
-                        elif runtime == "auto":
-                            win_venvs = (
-                                [
-                                    Path(api_dir) / "runtime" / "service-venv" / "Scripts" / "python.exe",
-                                    Path(api_dir) / ".venv" / "Scripts" / "python.exe",
-                                ]
-                                if api_dir
-                                else []
-                            )
-                            use_wsl = not any(p.is_file() for p in win_venvs)
-
-                    # 清理残留失效句柄，防止重复堆叠
-                    self._terminate_bg_proc()
-
-                    if use_wsl:
+                    if self._bg_proc is not None and self._bg_proc.poll() is None:
+                        self._starting = False
+                        return False, "已有启动进程，服务尚未就绪"
+                    if self._use_wsl(api_dir):
                         distro = self._detect_wsl_distro()
                         wsl_dir = self._win_to_wsl_path(api_dir) if api_dir else ""
                         script = self._build_wsl_start_script(wsl_dir, port)
@@ -741,70 +738,49 @@ class FeiyuCoverPlugin(MaiBotPlugin):
             self._starting = False
             return False, msg
 
+    def _stop_listener(self, directory: str, port: int) -> int:
+        helper = Path(__file__).with_name("api_listener.py")
+        if self._use_wsl(directory):
+            distro = self._detect_wsl_distro()
+            if not distro:
+                raise RuntimeError("未识别到 WSL 发行版")
+            argv = ["wsl.exe", "-d", distro, "--exec", "python3", "-I", "-",
+                    self._win_to_wsl_path(directory), str(port)]
+            res = subprocess.run(argv, input=helper.read_bytes(), capture_output=True, timeout=14,
+                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if res.returncode:
+                raise RuntimeError(res.stderr.decode("utf-8", errors="replace").strip() or f"退出码 {res.returncode}")
+            return int(res.stdout.strip())
+        import runpy
+        root = Path(directory).expanduser().resolve()
+        if not directory or not (root / "cover_api/app.py").is_file():
+            raise RuntimeError("未找到绑定的 API 项目目录")
+        helpers = runpy.run_path(str(helper))
+        return helpers["windows_stop" if os.name == "nt" else "linux_stop"](root, port)
+
     async def _stop_api(self) -> str:
-        """关闭 API（仅当标记表明服务是本插件拉起的；无需用户手写停止命令）。"""
-        if not self.config.cover.auto_stop_api:
-            return "未开启自动关闭"
-        flag = self._started_flag
-        if not flag or not flag.exists():
-            return "服务非本插件拉起，跳过关闭"
-        meta = self._read_started_flag()
+        cover = self.config.cover
+        if not cover.auto_stop_api or not self._is_local_api():
+            return "已跳过（自动关闭已禁用或非本地 API）"
         try:
-            custom_stop = (self.config.cover.api_stop_cmd or "").strip()
-            if custom_stop:
-                self._terminate_bg_proc()
-                proc = await asyncio.create_subprocess_shell(
-                    custom_stop,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                with contextlib.suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(proc.wait(), timeout=15.0)
-                return "已执行自定义停止命令"
-
-            mode = meta.get("mode", "")
-            self._terminate_bg_proc()
-            if mode == "wsl" or (os.name == "nt" and mode != "local"):
-                distro = str(meta.get("distro") or self._detect_wsl_distro() or "")
-                argv = ["wsl.exe"]
-                if distro:
-                    argv.extend(["-d", distro])
-                argv.extend(["--", "bash", "-s"])
-                popen_kw: dict[str, Any] = {
-                    "stdin": subprocess.PIPE,
-                    "stdout": subprocess.DEVNULL,
-                    "stderr": subprocess.DEVNULL,
-                }
-                if os.name == "nt":
-                    popen_kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-                stopper = subprocess.Popen(argv, **popen_kw)
-                if stopper.stdin:
-                    stopper.stdin.write(b"pkill -f 'uvicorn cover_api.app:app' 2>/dev/null || true\n")
-                    stopper.stdin.close()
-                with contextlib.suppress(Exception):
-                    await asyncio.to_thread(stopper.wait, 10.0)
-                return "已自动关闭 WSL 中的翻唱 API"
-
-            pid = int(meta.get("pid") or 0)
-            if pid > 0:
-                if os.name == "nt":
-                    proc = await asyncio.create_subprocess_exec(
-                        "taskkill", "/PID", str(pid), "/T", "/F",
-                        stdout=asyncio.subprocess.DEVNULL,
-                        stderr=asyncio.subprocess.DEVNULL,
-                    )
-                    with contextlib.suppress(asyncio.TimeoutError):
-                        await asyncio.wait_for(proc.wait(), timeout=10.0)
-                else:
-                    with contextlib.suppress(ProcessLookupError, PermissionError):
-                        os.kill(pid, 15)
-                return f"已关闭本地翻唱 API (PID={pid})"
-            return "已释放后台服务进程"
-        except Exception as exc:  # noqa: BLE001
-            return f"停止服务失败：{exc}"
-        finally:
-            with contextlib.suppress(OSError):
-                flag.unlink(missing_ok=True)
+            meta = self._read_started_flag()
+            if not meta and not cover.auto_start_api:
+                return "未接管外部服务"
+            if (cover.api_stop_cmd.strip() and meta.get("mode") == "custom"
+                    and meta.get("port") == self._api_port()):
+                proc = await asyncio.create_subprocess_shell(cover.api_stop_cmd)
+                if await asyncio.wait_for(proc.wait(), timeout=15):
+                    raise RuntimeError(f"自定义停止命令退出码 {proc.returncode}")
+                message = "自定义停止命令执行成功"
+            else:
+                pid = await asyncio.to_thread(self._stop_listener, self._discover_api_dir(), self._api_port())
+                message = f"已关闭绑定的本地 API (PID={pid})" if pid else "本地 API 已停止"
+            if self._started_flag:
+                self._started_flag.unlink(missing_ok=True)
+            self._bg_proc = None
+            return message
+        except Exception as exc:
+            return f"停止服务失败：{exc or type(exc).__name__}"
 
     async def _ensure_service(self) -> tuple[bool, str]:
         """确保 API 可用：在线直接返回；否则按配置尝试自动拉起。
@@ -1005,6 +981,9 @@ class FeiyuCoverPlugin(MaiBotPlugin):
         tmp.replace(path)
         return clean
 
+    def _api_base(self) -> str:
+        return (self.config.cover.api_base.strip() or "http://127.0.0.1:19655").rstrip("/")
+
     @API("jingge_state", description="读取音色参数、服务地址与健康状态")
     async def jingge_state(self) -> dict[str, Any]:
         ok = await self._health_ok()
@@ -1141,6 +1120,10 @@ class FeiyuCoverPlugin(MaiBotPlugin):
     @API("jingge_cache_clean", description="立即清理翻唱 API 的缓存与旧任务")
     async def jingge_cache_clean(self, force: bool = False) -> dict[str, Any]:
         try:
+            if force:
+                stats = await self.jingge_cache_stats()
+                if stats.get("force_preserves_jobs") is not True:
+                    return {"ok": False, "error": "当前 API 未确认清缓存会保留作品。请更新并重启翻唱 API 后重试。"}
             resp = await self._client().post("/cache/clean", json={"force": bool(force)}, timeout=60.0)
             resp.raise_for_status()
             return resp.json()
@@ -1246,6 +1229,100 @@ class FeiyuCoverPlugin(MaiBotPlugin):
             "eta_seconds": job.get("eta_seconds", 240),
         }
 
+    def _drop_source_upload(self, token: str) -> None:
+        entry = self._source_uploads.pop(token, None)
+        if entry is None:
+            return
+        entry['expiry'].cancel()
+        if entry.get('task'):
+            entry['task'].cancel()
+        entry['chunks'].clear()
+
+    def _expire_source_later(self, token: str, entry: dict[str, Any]) -> None:
+        if entry.get('expiry'):
+            entry['expiry'].cancel()
+        entry['expiry'] = asyncio.get_running_loop().call_later(600, self._drop_source_upload, token)
+
+    async def _forward_source(self, token: str, entry: dict[str, Any]) -> None:
+        async def blocks():
+            for block in entry['chunks']:
+                yield block
+
+        try:
+            resp = await self._client().post('/sources/uploads', content=blocks(), headers={
+                'Content-Type': 'application/octet-stream', 'Content-Length': str(entry['size']),
+                'X-Audio-Extension': entry['extension'],
+            }, timeout=120.0, follow_redirects=False)
+            if not resp.is_success:
+                raise ValueError(f'上传音源失败（HTTP {resp.status_code}）')
+            upload_id = resp.json().get('upload_id')
+            if not isinstance(upload_id, str) or not re.fullmatch(r'[0-9a-f]{32}', upload_id):
+                raise ValueError('翻唱 API 返回的音源标识无效')
+            entry['result'] = {'ok': True, 'status': 'done', 'upload_id': upload_id}
+        except ValueError as exc:
+            entry['result'] = {'ok': False, 'status': 'failed', 'error': str(exc)}
+        except Exception:
+            entry['result'] = {'ok': False, 'status': 'failed', 'error': '音源传输失败，请检查翻唱 API 连接并重新上传'}
+        finally:
+            entry['chunks'].clear()
+            if token in self._source_uploads:
+                self._expire_source_later(token, entry)
+
+    @API("jingge_source_upload", description="串行分片上传试听音源并查询转发进度")
+    async def jingge_source_upload(self, op: str, token: str = '', name: str = '', size: int = 0,
+                                   index: int = -1, data: str = '') -> dict[str, Any]:
+        if op == 'start':
+            ext = Path(name).suffix.lower()[1:]
+            if ext not in {'mp3', 'wav', 'flac', 'ogg', 'opus', 'm4a', 'aac'}:
+                return {'ok': False, 'error': '音源文件后缀不受支持'}
+            if type(size) is not int or not 0 < size <= 32 * 1024 * 1024:
+                return {'ok': False, 'error': '音源须大于 0 字节且不超过 32 MiB'}
+            entries = self._source_uploads.values()
+            if len(entries) >= 256 or sum(e['result']['status'] in ('receiving', 'uploading') for e in entries) >= 2:
+                return {'ok': False, 'error': '上传会话已满，请稍后再试'}
+            token = uuid.uuid4().hex
+            entry = {'size': size, 'extension': ext, 'chunks': [], 'received': 0,
+                     'chunk_size': 24 * 1024,
+                     'result': {'ok': True, 'status': 'receiving', 'token': token, 'chunk_size': 24 * 1024}}
+            self._source_uploads[token] = entry
+            self._expire_source_later(token, entry)
+            return entry['result']
+        entry = self._source_uploads.get(token)
+        if entry is None:
+            return {'ok': False, 'error': '上传会话已过期，请重新选择音源'}
+        if op == 'cancel':
+            self._drop_source_upload(token)
+            return {'ok': True, 'status': 'cancelled'}
+        if op == 'status' or (op == 'finish' and entry['result']['status'] != 'receiving'):
+            return entry['result']
+        if op == 'chunk' and entry['result']['status'] == 'receiving':
+            if index == 0 and len(data) > 32768:
+                entry['chunk_size'] = 240 * 1024
+            expected = min(entry['chunk_size'], entry['size'] - entry['received'])
+            try:
+                if (type(index) is not int or index != len(entry['chunks']) or not expected
+                        or len(data) != 4 * ((expected + 2) // 3)):
+                    raise ValueError
+                block = base64.b64decode(data, validate=True)
+                if len(block) != expected:
+                    raise ValueError
+            except (ValueError, TypeError):
+                self._drop_source_upload(token)
+                return {'ok': False, 'error': '音源分片顺序、编码或长度无效，请重新上传'}
+            entry['chunks'].append(block)
+            entry['received'] += expected
+            self._expire_source_later(token, entry)
+            return entry['result']
+        if op == 'finish':
+            if entry['received'] != entry['size']:
+                self._drop_source_upload(token)
+                return {'ok': False, 'error': '音源尚未完整接收，请重新上传'}
+            entry['result'] = {'ok': True, 'status': 'uploading'}
+            entry['task'] = asyncio.create_task(self._forward_source(token, entry))
+            await asyncio.wait({entry['task']}, timeout=0.25)
+            return entry['result']
+        return {'ok': False, 'error': '不支持的上传操作或会话状态'}
+
     @API("jingge_preview", description="试听工作台：用临时参数生成，不影响已保存的语音路由")
     async def jingge_preview(self, payload: str) -> dict[str, Any]:
         try:
@@ -1255,7 +1332,10 @@ class FeiyuCoverPlugin(MaiBotPlugin):
         song = str(data.get("song") or "").strip()
         selected_track = data.get("selected_track") if isinstance(data.get("selected_track"), dict) else None
         bvid = str(data.get("bvid") or "").strip()
-        if not song and not selected_track and not bvid:
+        upload_id = data.get('upload_id')
+        if upload_id and (not isinstance(upload_id, str) or not re.fullmatch(r'[0-9a-f]{32}', upload_id)):
+            return {'ok': False, 'error': '上传音源标识无效，请重新上传'}
+        if not upload_id and not song and not selected_track and not bvid:
             return {"ok": False, "error": "请先填写歌名或选择一个搜索结果"}
 
         if not await self._health_ok():
@@ -1281,10 +1361,15 @@ class FeiyuCoverPlugin(MaiBotPlugin):
             "preview_seconds": preview_seconds,
             "source_hint": source_hint,
         }
-        if selected_track:
-            body["selected_track"] = selected_track
-        if bvid:
-            body["bvid"] = bvid
+        if upload_id:
+            body.pop('song')
+            body.pop('source_hint')
+            body['upload_id'] = upload_id
+        else:
+            if selected_track:
+                body['selected_track'] = selected_track
+            if bvid:
+                body['bvid'] = bvid
 
         try:
             resp = await self._client().post("/cover", json=body, timeout=8.5)
@@ -1309,7 +1394,7 @@ class FeiyuCoverPlugin(MaiBotPlugin):
             resp = await self._client().get(
                 "/sources/search",
                 params={"keyword": kw, "limit": max(1, min(int(limit), 15)), "source_hint": source_hint or "auto"},
-                timeout=8.5,
+                timeout=20.0,
             )
             resp.raise_for_status()
             return resp.json()
@@ -1375,49 +1460,95 @@ class FeiyuCoverPlugin(MaiBotPlugin):
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "parts": 1, "error": f"{type(exc).__name__}: {exc}"}
 
-    @API("jingge_audio", description="分片取 60 秒试听音频（宿主单次返回限 512KB，所以切片传）")
+    async def _audio_rpc_chunk(self, url: str, chunk: int, timeout: float) -> tuple[str, int, int, int, str]:
+        async with self._audio_lock:
+            if self._unloading:
+                raise RuntimeError("插件正在卸载")
+            client = self._client()
+            key = (client, url)
+            entries = self._audio_cache
+            now = time.monotonic()
+            for old_key, (old_stream, _, _, created) in list(entries.items()):
+                if now - created > 300:
+                    old_stream.close()
+                    entries.pop(old_key, None)
+            if key not in entries:
+                # Serialize fills so the bound includes partial downloads: 4 x 64 MiB.
+                if len(entries) >= 4:
+                    entries.pop(next(iter(entries)))[0].close()
+                task = asyncio.create_task(self._spool_audio(client, url, timeout))
+                self._audio_fill = task
+                try:
+                    stream, size, mime = await task
+                    if (size + 240 * 1024 - 1) // (240 * 1024) > 100:
+                        stream.close()
+                        raise ValueError("音频超过前端 100 片上限")
+                    entries[key] = (stream, size, mime, time.monotonic())
+                finally:
+                    self._audio_fill = None
+            stream, size, mime, created = entries.pop(key)
+            entries[key] = (stream, size, mime, time.monotonic())
+            n = 240 * 1024
+            count = max(1, (size + n - 1) // n)
+            idx = min(max(0, int(chunk)), count - 1)
+            stream.seek(idx * n)
+            return base64.b64encode(stream.read(n)).decode("ascii"), idx, count, size, mime
+
+    @staticmethod
+    async def _spool_audio(client, url, timeout):
+        import tempfile
+        limit = 64 * 1024 * 1024
+        async with client.stream("GET", url, headers={"Accept-Encoding": "identity"}, timeout=timeout) as resp:
+            if resp.status_code != 200:
+                raise ValueError(f"音频尚未准备好（HTTP {resp.status_code}）")
+            if resp.headers.get("content-encoding", "identity").lower() != "identity":
+                raise ValueError("音频响应编码不受支持")
+            length = resp.headers.get("content-length")
+            expected = int(length) if length is not None else None
+            if expected is not None and not 0 <= expected <= limit:
+                raise ValueError("音频大小超过限制")
+            stream = tempfile.TemporaryFile()
+            try:
+                size = 0
+                async for block in resp.aiter_raw(64 * 1024):
+                    size += len(block)
+                    if size > limit:
+                        raise ValueError("音频大小超过限制")
+                    stream.write(block)
+                if expected is not None and size != expected:
+                    raise ValueError("音频长度不一致")
+                return stream, size, resp.headers.get("content-type") or "audio/mpeg"
+            except BaseException:
+                stream.close()
+                raise
+
+    @API("jingge_audio", description="分片读取 60 秒试听音频")
     async def jingge_audio(self, job_id: str, part: int = 0, chunk: int = 0) -> dict[str, Any]:
         if not job_id.strip():
             raise ValueError("缺少任务号")
-        resp = await self._client().get(
-            f"/jobs/{job_id}/voice-part/{int(part)}", timeout=120.0,
-        )
-        if resp.status_code != 200:
-            raise ValueError(f"第 {int(part) + 1} 段还没准备好（HTTP {resp.status_code}）")
+        part = int(part)
+        encoded, idx, total, size, content_type = await self._audio_rpc_chunk(
+            f"/jobs/{job_id}/voice-part/{part}", chunk, 120.0)
+        return {"audio": encoded, "chunk": idx, "chunks": total,
+                "content_type": content_type, "size_kb": round(size / 1024, 1), "part": part}
 
-        encoded, idx, total = self._slice_audio(resp.content, chunk)
-        return {
-            "audio": encoded,
-            "chunk": idx,
-            "chunks": total,
-            "content_type": resp.headers.get("content-type") or "audio/mpeg",
-            "size_kb": round(len(resp.content) / 1024, 1),
-            "part": int(part),
-        }
-
-    @API("jingge_file", description="分片取完整成品音频，供试听工作台下载")
+    @API("jingge_file", description="分片读取完整成品音频")
     async def jingge_file(self, job_id: str, chunk: int = 0) -> dict[str, Any]:
         if not job_id.strip():
             raise ValueError("缺少任务号")
-        resp = await self._client().get(f"/jobs/{job_id}/audio", timeout=180.0)
-        if resp.status_code != 200:
-            raise ValueError(f"成品还没准备好（HTTP {resp.status_code}）")
+        encoded, idx, total, size, content_type = await self._audio_rpc_chunk(
+            f"/jobs/{job_id}/audio", chunk, 180.0)
+        return {"audio": encoded, "chunk": idx, "chunks": total,
+                "total_kb": round(size / 1024, 1), "content_type": content_type}
 
-        encoded, idx, total = self._slice_audio(resp.content, chunk)
-        return {
-            "audio": encoded,
-            "chunk": idx,
-            "chunks": total,
-            "total_kb": round(len(resp.content) / 1024, 1),
-            "content_type": resp.headers.get("content-type") or "audio/mpeg",
-        }
-
-    @API("jingge_save_to", description="把翻唱成品直接保存到指定的本地路径（绕开内嵌浏览器不能弹另存为的限制）")
+    @API("jingge_save_to", description="保存完整成品；path=:native-dialog: 打开宿主桌面另存为，:native-status:<token> 查询结果")
     async def jingge_save_to(self, job_id: str, path: str) -> dict[str, Any]:
-        """把完整成品写到插件宿主（Windows）上的指定路径。
-
-        path 可以是目录（自动用歌名命名）或以 .mp3 结尾的完整文件路径。
-        """
+        """保存完整音频；桌面另存为由后台工作线程执行，不占用 RPC。"""
+        if (path or "").strip() == ":native-dialog:":
+            return self._native_save_start(job_id)
+        raw_status = (path or "").strip()
+        if raw_status.startswith(":native-status:"):
+            return self._native_save_status(raw_status[len(":native-status:"):])
         if not job_id.strip():
             raise ValueError("缺少任务号")
         raw = (path or "").strip().strip('"')
@@ -1455,16 +1586,197 @@ class FeiyuCoverPlugin(MaiBotPlugin):
         if resp.status_code != 200:
             raise ValueError(f"成品还没准备好（HTTP {resp.status_code}）")
 
+        temp = target.with_name(target.name + f".{uuid.uuid4().hex}.tmp")
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(resp.content)
+            with temp.open("xb") as stream:
+                stream.write(resp.content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp, target)
         except OSError as exc:
             raise ValueError(f"写入失败：{exc}") from None
+        finally:
+            with contextlib.suppress(OSError):
+                temp.unlink()
 
         return {
             "path": str(target),
             "size_kb": round(len(resp.content) / 1024, 1),
         }
+
+    def _native_save_start(self, job_id: str) -> dict[str, Any]:
+        if not job_id.strip():
+            return {"pending": False, "ok": False, "error": "缺少任务号"}
+        if os.name != "nt":
+            return {"pending": False, "ok": False, "error": "宿主不是 Windows，无法打开桌面另存为对话框"}
+        desktop_error = self._native_desktop_error()
+        if desktop_error:
+            return {"pending": False, "ok": False, "error": desktop_error}
+        with self._native_save_lock:
+            now = time.time()
+            self._native_save_states = {k: v for k, v in self._native_save_states.items() if v.get("pending") or now - v["created"] < 900}
+            if self._native_save_active:
+                if self._native_save_active["job_id"] == job_id:
+                    return {"pending": True, "token": self._native_save_active["token"]}
+                return {"pending": False, "ok": False, "error": "另一个保存对话框仍在等待操作，请稍后重试"}
+            token = uuid.uuid4().hex
+            state = {"token": token, "job_id": job_id, "created": now, "pending": True}
+            self._native_save_active = state
+            self._native_save_states[token] = state
+        threading.Thread(target=self._native_save_worker, args=(token, job_id), daemon=True,
+                         name="feiyu-native-save").start()
+        return {"pending": True, "token": token}
+
+    @staticmethod
+    def _native_desktop_error() -> str:
+        """仅检测当前 Windows 进程是否附着在交互桌面，不依赖 RPC 标准输入。"""
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            user32.OpenInputDesktop.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            user32.OpenInputDesktop.restype = wintypes.HANDLE
+            user32.CloseDesktop.argtypes = [wintypes.HANDLE]
+            desktop = user32.OpenInputDesktop(0, False, 0x0100)
+            if not desktop:
+                return "宿主进程无法访问交互桌面，无法显示另存为对话框"
+            user32.CloseDesktop(desktop)
+            return ""
+        except Exception as exc:  # noqa: BLE001
+            return f"检测 Windows 交互桌面失败：{type(exc).__name__}: {exc}"
+
+    @staticmethod
+    def _native_save_dialog(suggested_name: str = "麦弦翻唱") -> str:
+        """使用 comdlg32 原生 Unicode 文件对话框，不依赖 Tcl/Tk 或 PowerShell。"""
+        import ctypes
+        from ctypes import wintypes
+        ole32 = ctypes.WinDLL("ole32", use_last_error=True)
+        ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+        ole32.CoInitializeEx.restype = ctypes.c_long
+        co_result = int(ole32.CoInitializeEx(None, 0x2))
+        if co_result < 0:
+            raise OSError(co_result, "无法初始化文件对话框线程 COM STA")
+        try:
+            return FeiyuCoverPlugin._native_save_dialog_sta(suggested_name)
+        finally:
+            ole32.CoUninitialize()
+
+    @staticmethod
+    def _native_save_dialog_sta(suggested_name: str) -> str:
+        import ctypes
+        from ctypes import wintypes
+
+        class OPENFILENAMEW(ctypes.Structure):
+            _fields_ = [
+                ("lStructSize", wintypes.DWORD), ("hwndOwner", wintypes.HWND),
+                ("hInstance", wintypes.HINSTANCE), ("lpstrFilter", wintypes.LPCWSTR),
+                ("lpstrCustomFilter", wintypes.LPWSTR), ("nMaxCustFilter", wintypes.DWORD),
+                ("nFilterIndex", wintypes.DWORD), ("lpstrFile", wintypes.LPWSTR),
+                ("nMaxFile", wintypes.DWORD), ("lpstrFileTitle", wintypes.LPWSTR),
+                ("nMaxFileTitle", wintypes.DWORD), ("lpstrInitialDir", wintypes.LPCWSTR),
+                ("lpstrTitle", wintypes.LPCWSTR), ("Flags", wintypes.DWORD),
+                ("nFileOffset", wintypes.WORD), ("nFileExtension", wintypes.WORD),
+                ("lpstrDefExt", wintypes.LPCWSTR), ("lCustData", wintypes.LPARAM),
+                ("lpfnHook", ctypes.c_void_p), ("lpTemplateName", wintypes.LPCWSTR),
+                ("pvReserved", ctypes.c_void_p), ("dwReserved", wintypes.DWORD),
+                ("FlagsEx", wintypes.DWORD),
+            ]
+
+        buffer = ctypes.create_unicode_buffer(32768)
+        safe_name = "".join(ch for ch in suggested_name if ch not in '\\/:*?"<>|').strip()[:100] or "麦弦翻唱"
+        buffer.value = safe_name if safe_name.lower().endswith(".mp3") else safe_name + ".mp3"
+        dialog = OPENFILENAMEW()
+        dialog.lStructSize = ctypes.sizeof(dialog)
+        filter_buffer = ctypes.create_unicode_buffer("MP3 音频 (*.mp3)\0*.mp3\0所有文件 (*.*)\0*.*\0\0")
+        dialog.lpstrFilter = ctypes.cast(filter_buffer, wintypes.LPCWSTR)
+        dialog.nFilterIndex = 1
+        dialog.lpstrFile = ctypes.cast(buffer, wintypes.LPWSTR)
+        dialog.nMaxFile = len(buffer)
+        dialog.lpstrTitle = "保存麦弦翻唱"
+        dialog.lpstrDefExt = "mp3"
+        dialog.Flags = 0x00000002 | 0x00000004 | 0x00000800 | 0x00080000
+        comdlg32 = ctypes.WinDLL("comdlg32", use_last_error=True)
+        comdlg32.GetSaveFileNameW.argtypes = [ctypes.POINTER(OPENFILENAMEW)]
+        comdlg32.GetSaveFileNameW.restype = wintypes.BOOL
+        comdlg32.CommDlgExtendedError.restype = wintypes.DWORD
+        if comdlg32.GetSaveFileNameW(ctypes.byref(dialog)):
+            return buffer.value
+        error = int(comdlg32.CommDlgExtendedError())
+        if error == 0:
+            return ""
+        raise OSError(error, f"GetSaveFileNameW 对话框错误 0x{error:04X}")
+
+    def _native_save_status(self, token: str) -> dict[str, Any]:
+        with self._native_save_lock:
+            state = self._native_save_states.get(token)
+            if not state or (not state.get("pending") and time.time() - state["created"] >= 900):
+                self._native_save_states.pop(token, None)
+                return {"pending": False, "ok": False, "error": "保存状态已过期或 token 无效"}
+            return {k: v for k, v in state.items() if k not in ("created", "job_id")}
+
+    def _native_save_worker(self, token: str, job_id: str) -> None:
+        result: dict[str, Any]
+        try:
+            suggested_name = asyncio.run(self._native_suggested_name(job_id))
+            selected = self._native_save_dialog(suggested_name)
+            if not selected:
+                result = {"pending": False, "ok": False, "cancelled": True}
+            else:
+                audio = asyncio.run(self._native_download_audio(job_id))
+                target = Path(selected)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                temp = target.with_name(target.name + "." + token + ".tmp")
+                try:
+                    with temp.open("xb") as stream:
+                        stream.write(audio)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    os.replace(temp, target)
+                finally:
+                    with contextlib.suppress(OSError):
+                        temp.unlink()
+                result = {"pending": False, "ok": True, "path": str(target), "size_kb": round(len(audio) / 1024, 1)}
+        except Exception as exc:  # noqa: BLE001
+            result = {"pending": False, "ok": False, "error": f"另存为失败：{type(exc).__name__}: {exc}"}
+        with self._native_save_lock:
+            state = self._native_save_states.get(token)
+            if state:
+                state.update(result, created=time.time())
+            if self._native_save_active and self._native_save_active.get("token") == token:
+                self._native_save_active = None
+
+    async def _native_suggested_name(self, job_id: str) -> str:
+        fallback = "麦弦翻唱"
+        try:
+            if httpx is None:
+                return fallback
+            base = (self.config.cover.api_base or "").rstrip("/")
+            key = (self.config.cover.api_key or "").strip()
+            headers = {"Authorization": f"Bearer {key}"} if key else {}
+            async with httpx.AsyncClient(base_url=base, headers=headers, timeout=8.0) as client:
+                resp = await client.get(f"/jobs/{job_id}")
+            if resp.status_code == 200:
+                data = resp.json()
+                title = (data.get("meta") or {}).get("title") or data.get("song") or ""
+                safe = "".join(ch for ch in str(title) if ch not in '\\/:*?\"<>|').strip()[:100]
+                if safe:
+                    return f"{safe}-麦弦翻唱"
+        except Exception as exc:  # noqa: BLE001
+            self.ctx.logger.debug("读取另存为默认文件名失败：%s", exc)
+        return fallback
+
+    async def _native_download_audio(self, job_id: str) -> bytes:
+        if httpx is None:
+            raise RuntimeError("缺少 httpx 依赖")
+        base = (self.config.cover.api_base or "").rstrip("/")
+        key = (self.config.cover.api_key or "").strip()
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        async with httpx.AsyncClient(base_url=base, headers=headers, timeout=180.0) as client:
+            resp = await client.get(f"/jobs/{job_id}/audio")
+            if resp.status_code != 200:
+                raise RuntimeError(f"完整成品不可用（HTTP {resp.status_code}）")
+            return resp.content
 
     @API("jingge_job", description="查询翻唱任务状态")
     async def jingge_job(self, job_id: str) -> dict[str, Any]:
@@ -1552,6 +1864,30 @@ class FeiyuCoverPlugin(MaiBotPlugin):
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": f"启动训练失败：{exc}"}
 
+    @API("jingge_model_uploads", description="读取音色删除清单及保护原因")
+    async def jingge_model_uploads(self) -> dict[str, Any]:
+        try:
+            resp = await self._client().get("/models/uploads", timeout=6.0)
+            if resp.status_code == 404:
+                return {"error": "当前翻唱 API 未提供模型管理接口"}
+            if resp.is_error:
+                return {"error": resp.json().get("detail") or f"HTTP {resp.status_code}"}
+            return resp.json()
+        except Exception as exc:
+            return {"error": f"读取模型管理清单失败：{exc}"}
+
+    @API("jingge_model_delete", description="按已确认的文件清单删除音色")
+    async def jingge_model_delete(self, model_id: str, confirm: str) -> dict[str, Any]:
+        if not all(len(s) == 64 and all(c in "0123456789abcdef" for c in s) for s in (model_id, confirm)):
+            return {"ok": False, "error": "模型标识或确认令牌无效"}
+        try:
+            resp = await self._client().delete(f"/models/uploads/{model_id}", params={"confirm": confirm}, timeout=7.0)
+            if resp.is_error:
+                return {"ok": False, "error": resp.json().get("detail") or f"HTTP {resp.status_code}"}
+            return resp.json()
+        except Exception:
+            return {"ok": False, "error": "未能确认删除结果，请刷新模型列表后核对"}
+
     @API("jingge_model_import", description="导入外部 RVC WebUI / Applio 推理模型（.pth / .index / .zip / 目录）")
     async def jingge_model_import(
         self,
@@ -1628,6 +1964,7 @@ class FeiyuCoverPlugin(MaiBotPlugin):
 
     # ------------------------------------------------------------ 生命周期
     async def on_load(self) -> None:
+        self._unloading = False
         self._state_file = Path(self.ctx.paths.data_dir) / "pending_jobs.json"
         self._started_flag = Path(self.ctx.paths.data_dir) / "api_started_by_plugin.flag"
         self._load_state()
@@ -1643,9 +1980,6 @@ class FeiyuCoverPlugin(MaiBotPlugin):
     async def _auto_start_on_load(self) -> None:
         """加载时若服务离线则尝试拉起，结果只记日志，不阻塞 on_load。"""
         try:
-            # 重载时旧实例的停止命令可能仍在执行（走 WSL 约 1-2 秒），
-            # 稍等再探测，避免「检测时还在线→随后被关」导致最终离线
-            await asyncio.sleep(3.0)
             ok, msg = await self._ensure_service()
             if ok:
                 self.ctx.logger.info("麦弦：翻唱服务已就绪")
@@ -1655,6 +1989,18 @@ class FeiyuCoverPlugin(MaiBotPlugin):
             self.ctx.logger.warning("麦弦：加载时自动拉起异常：%s", exc)
 
     async def on_unload(self) -> None:
+        self._unloading = True
+        for token in list(self._source_uploads):
+            self._drop_source_upload(token)
+        if self._audio_fill is not None:
+            self._audio_fill.cancel()
+        async with self._audio_lock:
+            for stream, _, _, _ in self._audio_cache.values():
+                stream.close()
+            self._audio_cache.clear()
+        # 等待已经发起的启动操作，避免进程尚未监听便尝试关闭。
+        async with self._get_start_lock():
+            pass
         for task in list(self._tasks):
             task.cancel()
         if self._tasks:
@@ -1665,9 +2011,9 @@ class FeiyuCoverPlugin(MaiBotPlugin):
                 await self._http.aclose()
             self._http = None
         self._save_state()
-        # 仅关闭由本插件拉起的服务（有标记），避免误杀用户手动启动的 API
         stop_msg = await self._stop_api()
-        self.ctx.logger.info("麦弦插件已卸载，任务表已保存；服务关闭：%s", stop_msg)
+        log = self.ctx.logger.warning if stop_msg.startswith("停止服务失败") else self.ctx.logger.info
+        log("麦弦插件已卸载，任务表已保存；服务关闭：%s", stop_msg)
 
     async def on_config_update(self, scope: str, config_data: dict, version: str) -> None:
         if scope == "bot":

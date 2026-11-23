@@ -8,13 +8,13 @@ api_base = "http://127.0.0.1:19655"
 api_key = ""
 
 # 零命令自动拉起本地服务（无需手写启动/停止命令！）
-auto_start_api = false
+auto_start_api = true
 # 只需粘贴 feiyu-cover-api 文件夹路径（如 G:\feiyu-cover 或 ~/feiyu-cover-api）；留空自动探测
 api_dir = ""
 # 运行环境："自动识别（推荐）" | "Windows WSL2" | "本机直接运行"
 api_runtime = "自动识别（推荐）"
-# 插件卸载时自动关闭由本插件拉起的服务（不影响手动启动的服务）
-auto_stop_api = false
+# 卸载时关闭绑定的本地实例（含升级前已启动的实例）；共享或外部部署可将两个开关设为 false
+auto_stop_api = true
 
 # 群聊点歌策略
 # 群聊发歌模式："副歌高潮直出（58秒·推荐）" | "从头分段发送（前2段×60秒）"

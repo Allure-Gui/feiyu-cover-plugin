@@ -4,17 +4,17 @@
   <br>
   <img src="assets/icon.png" width="76" alt="麦弦图标">
   <h1>麦弦 (MaiChord) · MaiBot AI 翻唱插件</h1>
-  <p>面向 MaiBot（MaiCore 1.4.6+）的本地 AI 翻唱、清唱猜歌互动与侧边栏声学工作台插件。</p>
+  <p>让麦麦不止陪你聊天，还能用你的音色开唱：群聊点歌、58 秒副歌、清唱猜歌，练出专属音色。</p>
 
   <p>
-    <img src="https://img.shields.io/badge/Version-v0.2.0-3B7DD8?style=for-the-badge&labelColor=24344D" alt="Version v0.2.0">
+    <img src="https://img.shields.io/badge/Version-v0.2.1-3B7DD8?style=for-the-badge&labelColor=24344D" alt="Version v0.2.1">
     <img src="https://img.shields.io/badge/MaiCore-1.4.6-4FA374?style=for-the-badge&labelColor=24344D" alt="MaiCore 1.4.6">
-    <img src="https://img.shields.io/badge/API-v0.3.0%2B-E87A64?style=for-the-badge&labelColor=24344D" alt="API v0.3.0+">
+    <img src="https://img.shields.io/badge/API-v0.3.1-E87A64?style=for-the-badge&labelColor=24344D" alt="API v0.3.1">
     <img src="https://img.shields.io/badge/License-MIT-E8B44C?style=for-the-badge&labelColor=24344D" alt="MIT License">
   </p>
 
   <p>
-    <a href="https://allure-gui.github.io/feiyu-cover-plugin/" target="_blank">在线试听（《雨爱》翻唱示例）</a>
+    <a href="https://allure-gui.github.io/feiyu-cover-plugin/" target="_blank">在线试听（《雨爱》完整翻唱）</a>
     &nbsp;·&nbsp;
     <a href="https://github.com/Allure-Gui/feiyu-cover-api">配套翻唱 API 仓库</a>
     &nbsp;·&nbsp;
@@ -35,7 +35,7 @@
 <br>
 
 > [!NOTE]
-> 本插件运行于 MaiBot 端，负责群聊与私聊点歌交互、清唱猜歌、分群排行榜、侧边栏调音台及语音发送；人声分离、RVC 推理换声与音色训练由独立的 **[feiyu-cover-api](https://github.com/Allure-Gui/feiyu-cover-api)**（建议 `v0.3.0+`）承担。
+> 本插件运行于 MaiBot 端，负责群聊与私聊点歌交互、清唱猜歌、分群排行榜、侧边栏调音台及语音发送；人声分离、RVC 推理换声与音色训练由独立的 **[feiyu-cover-api](https://github.com/Allure-Gui/feiyu-cover-api)**（建议 `v0.3.1`）承担。
 >
 > - **本机配备 8GB 及以上 NVIDIA 显卡**：可直接在本机部署 API，空闲待机显存占用为 **0 MB**；在插件设置中开启「自动拉起本地服务」后，可按需自动启停。
 > - **无独立显卡或多实例共用**：可将 API 部署在远程 GPU 服务器上，在插件设置中填写服务地址与访问密钥即可连接。
@@ -45,6 +45,8 @@
 </p>
 
 ## 主要功能
+
+插件 `0.2.1` 配套 API `0.3.1`。试听工坊可上传本地歌曲作为音源，并通过「另存为」保存作品。后端清空缓存时保留成品，QQ 原曲选项默认关闭。安装清单声明 MaiCore `1.0.0–1.4.99`、SDK `2.13.0–2.99.99`；设置页状态卡依赖 SDK `2.23+`。
 
 | 模块 | 说明 |
 |---|---|
@@ -94,7 +96,7 @@
 
 ## 耗时参考与推荐参数
 
-### 耗时参考（搭配 API `v0.3.0` + Mel-Band RoFormer）
+### 耗时参考（搭配 API `v0.3.1` + Mel-Band RoFormer）
 
 | 运行环境 | 首次整曲（3~4 分钟） | 60 秒试听 / 现学猜歌 | 复用分离缓存换音色 |
 |---|---|---|---|
@@ -126,12 +128,12 @@
 | `[plugin].enabled` | `true` | 插件总开关 |
 | `[cover].api_base` | `http://127.0.0.1:19655` | 翻唱 API 服务地址 |
 | `[cover].api_key` | 空 | Bearer 访问密钥（远程部署建议必填） |
-| `[cover].auto_start_api` | `false` | 服务离线时自动在后台拉起本地 API |
+| `[cover].auto_start_api` | `true` | 服务离线时自动拉起本地 API |
 | `[cover].api_dir` | 空 | 本地 `feiyu-cover-api` 目录路径（留空自动探测） |
-| `[cover].api_runtime` | `auto` | 运行环境：`auto`（自动识别）/ `wsl` / `local` |
-| `[cover].auto_stop_api` | `false` | 插件卸载时自动关闭由本插件拉起的服务 |
-| `[cover].deliver_mode` | `highlight` | 发歌模式：`highlight`（58 秒副歌）/ `two_parts`（前 2 段 × 60 秒） |
-| `[cover].send_cover_card` | `true` | 唱完是否附带渲染黑胶单曲卡片图 |
+| `[cover].api_runtime` | 自动识别（推荐） | 可选 Windows WSL2 或本机直接运行 |
+| `[cover].auto_stop_api` | `true` | 卸载时关闭绑定的本地实例，共享部署可关闭此项 |
+| `[cover].deliver_mode` | 副歌高潮直出（58秒·推荐） | 可切换为从头分段发送（前2段×60秒） |
+| `[cover].send_song_card` | `true` | 唱完是否附带渲染黑胶单曲卡片图 |
 | `[cover].cooldown_seconds` | `600` | 同用户点歌冷却间隔（秒） |
 | `[cover].poll_interval` | `10` | 任务进度轮询间隔（秒） |
 | `[cover].max_wait_seconds` | `1800` | 单任务最长等待时间（秒） |
@@ -146,7 +148,7 @@
 
 > 音色路由、命名预设与分群猜歌积分持久化于 `data/plugins/feiyu.voice-cover/` 目录下的 `voice.json`、`voice_presets.json` 与 `quiz_scores.json`。
 
-#### 对接的 API 接口（`feiyu-cover-api >= v0.3.0`）
+#### 对接的 API 接口（配套 `feiyu-cover-api v0.3.1`）
 
 ```text
 GET  /health                     健康检查

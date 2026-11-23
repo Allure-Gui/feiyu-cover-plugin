@@ -57,6 +57,11 @@
   .num{font-variant-numeric:tabular-nums}
   :focus-visible{outline:2px solid rgba(52,80,154,.35);outline-offset:2px}
 
+  .source-upload{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:8px 0;color:var(--muted)}
+  .source-upload [hidden]{display:none}
+  #sourceFileName{overflow-wrap:anywhere}
+  #sourceUploadProgress{width:70px;accent-color:var(--accent)}
+
   /* ---- 顶栏 ---- */
   header{
     display:flex; align-items:center; gap:12px;
@@ -691,9 +696,9 @@
             <!-- Layer 1: 预设快切 -->
             <div class="preset-bar">
               <span class="lbl">预设</span>
-              <select id="presetSelect"><option value="">（暂无预设）</option></select>
+              <select id="presetSelect"><option value="">（正在读取预设…）</option></select>
+              <button class="btn sm" id="btnPresetRetry" style="display:none">重试</button>
               <button class="btn sm" id="btnPresetLoad">载入</button>
-              <button class="btn sm" id="btnPresetSave">存为预设</button>
               <button class="btn sm danger" id="btnPresetDelete" title="删除选中的预设">删除</button>
             </div>
 
@@ -706,11 +711,15 @@
               <div class="preset-row">
                 <select id="routeModel"></select>
                 <button class="btn sm" id="btnOpenImportModel" title="导入外部 RVC WebUI 或 Applio 推理模型（.pth / .index / .zip）">导入模型</button>
+                <button type="button" class="btn sm danger" id="btnDeleteModel">删除模型</button>
               </div>
             </div>
 
             <!-- Layer 3: 核心声学参数 -->
             <div id="routeParams"></div>
+            <div style="display:flex;justify-content:flex-end;margin-top:10px">
+              <button class="btn sm" id="btnPresetSave" title="保存当前模型和整套音色参数">存为预设</button>
+            </div>
           </div>
         </div>
       </div>
@@ -730,7 +739,7 @@
               <span class="v mono" id="gpuName">检测中…</span>
             </div>
             <div class="kv-row">
-              <span class="k">显存占用</span>
+              <span class="k" title="这张显卡上所有进程合计使用的显存">整卡显存占用</span>
               <span class="v mono" id="gpuVram">—</span>
             </div>
             <div class="meter" id="vramMeter"><i style="width:0%"></i></div>
@@ -763,8 +772,8 @@
             </div>
             <div class="btn-tri push-bottom">
               <button class="btn sm" id="btnSaveCacheCfg">保存阈值</button>
-              <button class="btn sm" id="btnCleanCache">按阈值清理</button>
-              <button class="btn sm danger" id="btnWipeCache">清空全部</button>
+              <button class="btn sm" id="btnCleanCache" title="按保存的阈值清理，可能删除旧任务及其成品">按阈值清理</button>
+              <button class="btn sm danger" id="btnWipeCache" title="强制清理缓存，不按保留天数或任务数删除旧任务">清空缓存</button>
             </div>
           </div>
         </div>
@@ -810,6 +819,15 @@
               <button class="x" id="btnClearPick" title="取消指定，恢复自动匹配">×</button>
             </div>
             <div id="searchResults" class="search-list" style="display:none"></div>
+
+            <div class="source-upload" id="sourceUploadBox">
+              <input id="sourceFile" type="file" accept="audio/*,.mp3,.wav,.flac,.m4a,.ogg,.opus,.aac" hidden>
+              <button type="button" class="btn sm" id="btnChooseSource">上传音源</button>
+              <span id="sourceFileName">未选择音源</span>
+              <progress id="sourceUploadProgress" max="100" value="0" hidden></progress>
+              <button type="button" class="btn ghost sm" id="btnCancelSource" hidden>取消</button>
+              <button type="button" class="btn ghost sm" id="btnClearSource" hidden>清除</button>
+            </div>
 
             <!-- Preview Mode -->
             <div class="mode-seg" id="modeSeg">
@@ -1025,19 +1043,6 @@
   </div>
 </div>
 
-<!-- Modal 2: 保存成品到本地路径 -->
-<div class="modal-bg" id="saveModal">
-  <div class="modal">
-    <h3>保存成品到本地</h3>
-    <p class="mdesc">填写保存目录（自动按歌名命名）或完整 <code>.mp3</code> 文件路径。</p>
-    <input type="text" id="savePathInput" placeholder="例如：G:\feiyu-cover\samples 或 D:\Music">
-    <div class="modal-foot">
-      <button class="btn sm" data-close="saveModal">取消</button>
-      <button class="btn primary sm" id="btnSaveLocalOk">确认写入</button>
-    </div>
-  </div>
-</div>
-
 <!-- Modal 3: 推送到群聊/私聊 -->
 <div class="modal-bg" id="sendModal">
   <div class="modal">
@@ -1050,6 +1055,13 @@
     </div>
   </div>
 </div>
+
+<dialog id="deleteModelDialog" class="modal" aria-labelledby="deleteModelTitle">
+  <h3 id="deleteModelTitle">删除模型</h3>
+  <p id="deleteModelPlan" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:55vh;overflow:auto"></p>
+  <form method="dialog"><button class="btn sm" value="cancel" autofocus>取消</button>
+    <button class="btn sm danger" value="delete">永久删除</button></form>
+</dialog>
 
 <!-- Modal 4: 导入外部音色模型 -->
 <div class="modal-bg" id="importModelModal">
@@ -1435,9 +1447,21 @@
   }
 
   // ---- Presets ----
+  var presetRequest = 0;
   function loadPresets(preferName){
-    return rpcQuery("presetList").then(function(r){
-      var items = (r && r.presets) || [];
+    var request = ++presetRequest;
+    var retry = $("#btnPresetRetry");
+    retry.style.display = "none";
+    var select = $("#presetSelect");
+    select.innerHTML = '<option value="">（正在读取预设…）</option>';
+    var timer;
+    var timeout = new Promise(function(_, reject){
+      timer = setTimeout(function(){ reject(new Error("预设列表请求超时")); }, 12000);
+    });
+    return Promise.race([rpcQuery("presetList"), timeout]).then(function(r){
+      if(request !== presetRequest) return;
+      if(!r || !r.ok || !Array.isArray(r.presets)) throw new Error((r && r.error) || "预设列表响应格式异常");
+      var items = r.presets;
       var active = (r && r.active) || "";
       var sel = $("#presetSelect");
       var target = preferName || active || "";
@@ -1458,7 +1482,13 @@
         sel.value = "";
       }
       return r;
-    }).catch(function(){ return {presets:[]}; });
+    }).catch(function(err){
+      if(request !== presetRequest) return;
+      console.warn("[麦弦] presetList 读取失败", err);
+      select.innerHTML = '<option value="">（预设读取失败）</option>';
+      retry.title = String(err && err.message || err);
+      retry.style.display = "";
+    }).finally(function(){ clearTimeout(timer); });
   }
 
   function openModal(id){ $("#"+id).classList.add("on"); }
@@ -1568,7 +1598,7 @@
       wEl.innerHTML = '<span class="tag warn">热驻留 · '+left+'s后休眠</span>';
       $("#btnUnload").disabled = false;
     }else{
-      wEl.innerHTML = '<span class="tag ok">零显存待机</span>';
+      wEl.innerHTML = w.alive === false ? '<span class="tag">未启动</span>' : '<span class="tag">状态未知</span>';
       $("#btnUnload").disabled = true;
     }
     var act = sys.active_job;
@@ -1604,6 +1634,32 @@
     if(document.activeElement !== $("#cfgJobs")) $("#cfgJobs").value = c.keep_jobs;
   }
 
+  // Each channel owns one timer and one raw RPC, including time spent in the host queue.
+  function pollChannel(){
+    var timer, busy = false, next, epoch = 0;
+    function arm(){
+      clearTimeout(timer);
+      if(busy || !next) return;
+      timer = setTimeout(async function(){
+        var run = next, id = epoch;
+        next = null; busy = true;
+        try{ await run.work(function(){ return id === epoch; }); }
+        finally{ busy = false; arm(); }
+      }, next.ms);
+    }
+    return function(ms, work){
+      epoch++; next = work ? {ms:ms, work:work} : null; arm();
+    };
+  }
+  var jobPoll = pollChannel(), studioPoll = pollChannel(), healthPoll = pollChannel();
+
+  // 初始化和心跳共用真实的 state 请求，UI 超时后仍占用该槽。
+  var stateFlight = null;
+  function readState(){
+    if(!stateFlight) stateFlight = rpcQuery("state").finally(function(){ stateFlight = null; });
+    return stateFlight;
+  }
+
   // ---- Health Polling ----
   function paintHealth(h){
     var cls = "pill " + (h.ok ? "ok" : (h.starting ? "starting" : "bad"));
@@ -1615,28 +1671,20 @@
     }else if(!h.ok){
       S.wasOnline = false;
     }
-    if(typeof maibot !== "undefined"){
-      // 离线/启动中快速轮询；在线时慢速心跳，以便服务掉线后能及时感知
-      var wantMs = h.ok ? 30000 : (h.starting ? 2200 : 6000);
-      if(!S.healthTimer || S.healthTimerMs !== wantMs){
-        if(S.healthTimer) clearInterval(S.healthTimer);
-        S.healthTimerMs = wantMs;
-        S.healthTimer = setInterval(function(){
-          rpcQuery("state").then(function(st2){
-            if(st2 && st2.health) paintHealth(st2.health);
-          }).catch(function(){});
-        }, wantMs);
-      }
-    }else if(S.healthTimer){
-      clearInterval(S.healthTimer);
-      S.healthTimer = null;
-      S.healthTimerMs = 0;
-    }
+    if(typeof maibot === "undefined"){ healthPoll(); return; }
+    var ms = h.ok ? 30000 : (h.starting ? 2200 : 6000);
+    healthPoll(ms, async function tick(current){
+      var st;
+      try{ st = await readState(); }catch(e){}
+      if(!current()) return;
+      if(st && st.health) paintHealth(st.health);
+      else healthPoll(ms, tick);
+    });
   }
 
   function loadModels(){
     return withTimeout(rpcQuery("models"), 6000, null).then(function(m){
-      if(m && m.models && m.models.length){
+      if(m && !m.error && Array.isArray(m.models)){
         S.models = m.models;
         paintRoute();
         paintPlay();
@@ -1657,6 +1705,76 @@
     });
   }
 
+  // Local sources are reusable across preview modes until cleared or replaced.
+  let localSource = null;
+  const SOURCE_CHUNK = 24 * 1024;
+  async function sourceAction(op, args){
+    const reply = await rpcAction("sourceUpload", Object.assign({op:op}, args));
+    if(!reply || !reply.ok) throw new Error(reply && reply.error || "音源上传服务无响应");
+    return reply;
+  }
+  function paintSource(){
+    const s = localSource, pending = !!s && !s.id;
+    $("#btnChooseSource").disabled = pending;
+    $("#btnCancelSource").hidden = !pending;
+    $("#btnClearSource").hidden = !s || pending;
+    $("#sourceFileName").textContent = s ? s.name + " · " + (s.id ? "已就绪" : s.status) : "未选择音源";
+    $("#sourceUploadProgress").hidden = !pending;
+    $("#sourceUploadProgress").value = s ? s.percent : 0;
+  }
+  function discardSource(){
+    const old = localSource;
+    localSource = null;
+    paintSource();
+    if(old && old.token && !old.id) sourceAction("cancel", {token:old.token}).catch(e => toast("清理暂存失败：" + e.message, true));
+  }
+  async function uploadSource(file){
+    if(!file) return;
+    if(!/\.(mp3|wav|flac|m4a|ogg|opus|aac)$/i.test(file.name) || !file.size || file.size > 32 * 1024 * 1024){
+      toast("请选择非空的 MP3、WAV、FLAC、M4A、OGG、OPUS 或 AAC 文件，最大 32 MiB", true); return;
+    }
+    discardSource(); clearPick();
+    const s = localSource = {name:file.name, percent:0, status:"准备上传"};
+    paintSource();
+    try{
+      const start = await sourceAction("start", {name:file.name, size:file.size});
+      if(!start.token) throw new Error("服务未返回上传凭据");
+      s.token = start.token;
+      if(localSource !== s){ await sourceAction("cancel", {token:s.token}); return; }
+      const chunkSize = Math.min(SOURCE_CHUNK, start.chunk_size || SOURCE_CHUNK);
+      if(!Number.isSafeInteger(chunkSize) || chunkSize < 1) throw new Error("无效的上传分片大小");
+      for(let offset = 0, index = 0; offset < file.size; offset += chunkSize, index++){
+        const bytes = new Uint8Array(await file.slice(offset, offset + chunkSize).arrayBuffer());
+        if(localSource !== s) return;
+        let binary = "";
+        for(let pos = 0; pos < bytes.length; pos += 8192) binary += String.fromCharCode.apply(null, bytes.subarray(pos, pos + 8192));
+        await sourceAction("chunk", {token:s.token, index:index, data:btoa(binary)});
+        if(localSource !== s) return;
+        s.percent = Math.floor(100 * (offset + bytes.length) / file.size);
+        s.status = "已发送 " + s.percent + "%"; paintSource();
+      }
+      s.status = "服务正在接收音源"; paintSource();
+      let reply = await sourceAction("finish", {token:s.token});
+      const deadline = Date.now() + 5 * 60 * 1000;
+      while(localSource === s && reply.status === "uploading"){
+        if(Date.now() >= deadline) throw new Error("服务接收超时，请重新上传");
+        await new Promise(resolve => setTimeout(resolve, 700));
+        if(localSource !== s) return;
+        reply = await sourceAction("status", {token:s.token});
+      }
+      if(localSource !== s) return;
+      if(reply.status !== "done" || !/^[0-9a-f]{32}$/.test(reply.upload_id || "")) throw new Error("服务未确认音源就绪");
+      s.id = reply.upload_id; paintSource();
+    }catch(e){
+      if(localSource !== s) return;
+      discardSource(); toast("音源上传失败：" + (e.message || e), true);
+    }
+  }
+  $("#btnChooseSource").addEventListener("click", () => $("#sourceFile").click());
+  $("#sourceFile").addEventListener("change", function(){ const file = this.files[0]; this.value = ""; uploadSource(file); });
+  $("#btnCancelSource").addEventListener("click", discardSource);
+  $("#btnClearSource").addEventListener("click", discardSource);
+
   // ---- Playground: Search & Candidate Picker ----
   function clearPick(){
     S.selectedTrack = null;
@@ -1664,6 +1782,7 @@
     $$("#searchResults .search-item").forEach(function(el){ el.classList.remove("active"); });
   }
   function selectTrack(track, el){
+    if(localSource) discardSource();
     S.selectedTrack = track;
     var badge = $("#pickedOrigin");
     badge.className = "src-badge " + (track.origin || "");
@@ -1829,30 +1948,34 @@
   }
 
   function pollJob(jobId){
-    var tries = 0, maxTries = 620, fails = 0;
-    clearInterval(S.timer);
-    S.timer = setInterval(function(){
-      tries++;
-      if(tries > maxTries){
-        clearInterval(S.timer);
-        setRenderButtonBusy(false);
-        $("#bars").className = "bars";
-        $("#playStatus").textContent = "等待超时，请查看服务端状态";
-        return;
-      }
-      rpcQuery("job", {job_id: jobId}).then(function(r){
+    var fails = 0;
+    clearTimeout(S.timer);
+    S.timer = setTimeout(function(){
+      jobPoll();
+      setRenderButtonBusy(false);
+      hideMonitorProgress();
+      $("#bars").className = "bars";
+      $("#playStatus").textContent = "等待超时，请查看服务端状态";
+    }, 621 * 2200);
+    jobPoll(2200, async function tick(current){
+      try{
+        var r = await rpcQuery("job", {job_id: jobId});
+        if(!current()) return;
+        if(!r || !r.status) throw new Error("任务状态无效");
         fails = 0;
         var st = r.status || "";
         var meta = r.meta || {};
         if(meta.title) $("#playTitle").textContent = meta.title;
         if(st === "done"){
-          clearInterval(S.timer);
+          clearTimeout(S.timer);
+          jobPoll();
           setRenderButtonBusy(false);
           loadCompletedJob(r);
           loadRecentJobs();
           loadSystem(true);
         }else if(st === "failed" || st === "interrupted" || st === "cancelled"){
-          clearInterval(S.timer);
+          clearTimeout(S.timer);
+          jobPoll();
           setRenderButtonBusy(false);
           hideMonitorProgress();
           $("#bars").className = "bars";
@@ -1862,11 +1985,13 @@
         }else{
           setMonitorProgress(r.step || "downloading", r.progress || 0.08, r.message || "处理中…");
         }
-      }).catch(function(){
-        // 连续失败提示并在约 33 秒后停止等待，避免界面长时间假死
+      }catch(e){
+        if(!current()) return;
+        // 连续失败时停止等待。
         fails++;
         if(fails >= 15){
-          clearInterval(S.timer);
+          clearTimeout(S.timer);
+          jobPoll();
           setRenderButtonBusy(false);
           hideMonitorProgress();
           $("#bars").className = "bars";
@@ -1875,8 +2000,9 @@
         }else if(fails >= 5){
           $("#playStatus").textContent = "连接服务失败，正在重试（" + fails + "/15）…";
         }
-      });
-    }, 2200);
+      }
+      if(current()) jobPoll(2200, tick);
+    });
   }
 
   function doRenderOrCancel(){
@@ -1892,7 +2018,8 @@
       });
       return;
     }
-    var song = ($("#song").value || "").trim();
+    if(localSource && !localSource.id){ toast("请等待音源上传完成，或取消上传", true); return; }
+    var song = localSource ? localSource.name : ($("#song").value || "").trim();
     if(!song && !S.selectedTrack){
       toast("先输入歌名或选择一个搜索结果", true);
       $("#song").focus();
@@ -1915,6 +2042,7 @@
       source_hint: $("#sourceHint").value || "auto"
     };
     if(S.selectedTrack) reqPayload.selected_track = S.selectedTrack;
+    if(localSource && localSource.id) reqPayload.upload_id = localSource.id;
 
     rpcAction("preview", {payload: JSON.stringify(reqPayload)})
       .then(function(r){
@@ -1936,9 +2064,14 @@
 
   // ---- Recent Jobs ----
   function loadRecentJobs(){
-    return withTimeout(rpcQuery("jobs", {limit: 8}), 4000, null).then(function(r){
-      var box = $("#recentJobs");
-      var jobs = (r && r.jobs) || [];
+    var box = $("#recentJobs");
+    return withTimeout(rpcQuery("jobs", {limit: 30}), 4000, null).then(function(r){
+      if(!r || r.ok === false || !Array.isArray(r.jobs)){
+        var message = (r && r.error) || "读取近期作品失败，请稍后重试";
+        box.innerHTML = '<div class="empty">' + esc(message) + '</div>';
+        return;
+      }
+      var jobs = r.jobs;
       var doneJobs = jobs.filter(function(j){ return j.status === "done"; }).slice(0, 6);
       if(!doneJobs.length){
         box.innerHTML = '<div class="empty">暂无已完成的翻唱记录</div>';
@@ -1962,24 +2095,79 @@
         item.addEventListener("click", function(){ loadCompletedJob(j); });
         box.appendChild(item);
       });
+    }).catch(function(e){
+      box.innerHTML = '<div class="empty">读取近期作品失败：' + esc(e.message || e) + '</div>';
     });
   }
 
   // ---- Save Local & Push to Group ----
-  function doSaveLocal(){
-    if(!S.currentPlayJobId){ toast("还没有可保存的成品", true); return; }
-    var p = ($("#savePathInput").value || "").trim();
-    if(!p){ toast("请填写保存目录或文件路径", true); $("#savePathInput").focus(); return; }
-    try{ localStorage.setItem("jingge_last_save_dir", p); }catch(e){}
-    var btn = $("#btnSaveLocalOk");
-    btn.disabled = true; btn.textContent = "写入中…";
-    rpcAction("save_to", {job_id: S.currentPlayJobId, path: p})
-      .then(function(r){
-        closeModal("saveModal");
-        toast("已保存到 " + (r.path || p) + "（" + (r.size_kb || 0) + " KB）", false, 4000);
-      })
-      .catch(function(e){ toast("保存失败：" + (e.message || e), true); })
-      .finally(function(){ btn.disabled = false; btn.textContent = "确认写入"; });
+  function isLocalHostSaveContext(){
+    function isLoopback(value){
+      try{
+        var host = new URL(value).hostname.toLowerCase();
+        return host === "localhost" || host === "::1" || host === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(host);
+      }catch(e){ return false; }
+    }
+    if(isLoopback(location.href)) return true;
+    if(window.top !== window){
+      try{ if(document.referrer && isLoopback(document.referrer)) return true; }catch(e){}
+      try{ if(window.location.ancestorOrigins && Array.from(window.location.ancestorOrigins).some(isLoopback)) return true; }catch(e){}
+    }
+    return false;
+  }
+  async function saveToNativeDialog(jobId){
+    var result = await rpcAction("save_to", {job_id:jobId, path:":native-dialog:"});
+    if(result && result.cancelled) return {cancelled:true};
+    if(!result || result.pending !== true || !result.token) throw new Error((result && result.error) || "宿主未返回保存对话框令牌");
+    var deadline = Date.now() + 120000;
+    while(Date.now() < deadline){
+      await new Promise(function(resolve){ setTimeout(resolve, 500); });
+      var status = await rpcAction("save_to", {job_id:jobId, path:":native-status:" + result.token});
+      if(status && status.pending === true) continue;
+      if(status && status.cancelled) return {cancelled:true};
+      if(status && status.ok === true && status.path) return status;
+      if(status && status.ok === false) throw new Error(status.error || "宿主保存失败");
+      if(status && status.error) throw new Error(status.error);
+    }
+    throw new Error("等待 Windows 宿主保存对话框超时");
+  }
+  async function doSaveLocal(){
+    var jobId = S.currentPlayJobId;
+    if(!jobId){ toast("还没有可保存的成品", true); return; }
+    var title = $("#playTitle").textContent.replace(/[<>:\"/\\|?*\x00-\x1f]/g, " ").trim().slice(0, 80) || "未命名";
+    var name = title + "-麦弦翻唱.mp3";
+    var btn = $("#btnOpenSave") || this;
+    btn.disabled = true;
+    try{
+      var handle = null, writer = null;
+      if(typeof window.showSaveFilePicker === "function"){
+        try{ handle = await window.showSaveFilePicker({id:"maichord-export", startIn:"music", suggestedName:name, types:[{description:"MP3 音频", accept:{"audio/mpeg":[".mp3"]}}]}); }
+        catch(e){
+          if(e && e.name === "AbortError") return;
+          if(!e || !["SecurityError","NotAllowedError","NotSupportedError"].includes(e.name)) throw e;
+        }
+      }
+      if(handle){
+        try{
+          writer = await handle.createWritable();
+          var total;
+          for(var i = 0; i === 0 || i < total; i++){
+            var chunk = await rpcQuery("file", {job_id:jobId, chunk:i});
+            if(!chunk || chunk.chunk !== i || !chunk.audio || !Number.isInteger(chunk.chunks) || chunk.chunks < 1 || chunk.chunks > 100 || (i && total !== chunk.chunks)) throw new Error("成品分片不完整");
+            total = chunk.chunks;
+            await writer.write(Uint8Array.from(atob(chunk.audio), function(c){ return c.charCodeAt(0); }));
+          }
+          await writer.close(); writer = null;
+          toast("已保存：" + handle.name, false, 4000);
+          return;
+        }catch(e){ if(writer){ try{ await writer.abort(); }catch(ignore){} } throw e; }
+      }
+      if(!isLocalHostSaveContext()) throw new Error("当前为远程浏览器页面，无法打开 Windows 宿主保存对话框；请从宿主本机界面使用保存功能。");
+      var saved = await saveToNativeDialog(jobId);
+      if(saved.cancelled) return;
+      toast("已保存到 Windows 宿主：" + saved.path, false, 4000);
+    }catch(e){ toast("保存失败：" + (e.message || e), true); }
+    finally{ btn.disabled = false; }
   }
 
   function platformLabel(p){
@@ -2142,25 +2330,25 @@
       refreshOnlineData();
     }
     studioWasRunning = running;
-    if(running){
-      if(!studioTimer){
-        studioTimer = setInterval(function(){
-          if($("#pane-studio").classList.contains("on") || studioWasRunning){
-            loadStudioStatus(true);
-          }
-        }, 4000);
-      }
-    }else if(studioTimer){
-      clearInterval(studioTimer);
-      studioTimer = null;
-    }
   }
 
   function loadStudioStatus(silent){
-    return withTimeout(rpcQuery("studioStatus"), 6500, null).then(function(r){
-      paintStudio(r || {ok:false, error:"请求超时"});
-    }).catch(function(e){
-      if(!silent) toast("读取工坊状态失败：" + (e.message || e), true);
+    studioPoll(0, async function tick(current){
+      var expired = false;
+      var timeout = setTimeout(function(){
+        expired = true;
+        if(current()) paintStudio({ok:false, error:"请求超时"});
+      }, 6500);
+      try{
+        var r = await rpcQuery("studioStatus");
+        if(current() && !expired) paintStudio(r);
+      }catch(e){
+        if(current() && !expired){
+          paintStudio({ok:false, error:e.message || String(e)});
+          if(!silent) toast("读取工坊状态失败：" + (e.message || e), true);
+        }
+      }finally{ clearTimeout(timeout); }
+      if(current() && studioWasRunning) studioPoll(4000, tick);
     });
   }
 
@@ -2176,15 +2364,34 @@
   }
 
   // ---- Init ----
+  var studioInitialized = false;
+  var studioConnecting = false;
+  async function readInitialState(){
+    for(var attempt = 0; attempt < 3; attempt++){
+      var st = await withTimeout(readState(), 12000, null);
+      if(st && st.health && st.voice) return st;
+      if(attempt < 2){
+        $("#healthText").textContent = "正在重新连接麦弦…";
+        await new Promise(function(resolve){ setTimeout(resolve, 1000); });
+      }
+    }
+    throw new Error("多次连接后仍未读取到状态");
+  }
   function init(){
     if(typeof maibot === "undefined"){
       $("#routeParams").innerHTML = '<div class="empty">请在麦麦 WebUI 中打开此页面</div>';
       return;
     }
-    maibot.ready.then(function(){
-      return withTimeout(rpcQuery("state"), 5000, null);
+    if(studioConnecting) return;
+    studioConnecting = true;
+    $("#btnRecheck").disabled = true;
+    $("#health").className = "pill starting";
+    $("#healthText").textContent = "正在连接麦弦…";
+    return maibot.ready.then(function(){
+      var state = readInitialState();
+      loadPresets();
+      return state;
     }).then(function(st){
-      if(!st) throw new Error("读取状态超时（插件可能正在重载）");
       S.live = st.voice || {};
       S.savedSnap = canonicalVoice(S.live);
       S.defaults = st.defaults || {};
@@ -2196,15 +2403,17 @@
       paintRoute();
       paintPlay();
       setRenderButtonBusy(false);
-      paintHealth(st.health || {ok:false, message:"离线"});
-      return loadPresets();
+      studioInitialized = true;
+      if(!st.health.ok && !st.health.starting) return recheckService();
+      paintHealth(st.health);
     }).then(function(){
       if(S.wasOnline) return; // paintHealth 已触发 refreshOnlineData
       return withTimeout(rpcQuery("cacheStats"), 3000, null).then(function(cs){ paintCacheStats(cs || {}); });
     }).catch(function(e){
-      paintHealth({ok:false, starting:false, message:"状态读取失败，点「检测」重试"});
+      $("#health").className = "pill bad";
+      $("#healthText").textContent = "连接失败，点「检测」重试";
       $("#routeParams").innerHTML = '<div class="empty">读取失败：' + esc(e.message || e) + '</div>';
-    });
+    }).finally(function(){ studioConnecting = false; $("#btnRecheck").disabled = false; });
   }
 
   // ---- Event Bindings ----
@@ -2228,6 +2437,7 @@
   });
   $("#btnNameOk").addEventListener("click", doPresetSave);
   $("#presetName").addEventListener("keydown", function(e){ if(e.key === "Enter") doPresetSave(); });
+  $("#btnPresetRetry").addEventListener("click", function(){ loadPresets(); });
   $("#btnPresetLoad").addEventListener("click", doPresetLoad);
   $("#btnPresetDelete").addEventListener("click", function(){ doPresetDelete(this); });
   $("#presetSelect").addEventListener("change", function(){
@@ -2240,14 +2450,20 @@
     }
   });
 
-  $("#btnRecheck").addEventListener("click", function(){
-    var btn = this; btn.disabled = true;
+  function recheckService(){
+    var btn = $("#btnRecheck"); btn.disabled = true;
     paintHealth({ok:false, starting:true, message:"检测 / 拉起中…"});
-    rpcAction("recheck").then(function(r){
+    healthPoll(); // 手动检测期间暂停心跳，并丢弃上一次在途回包。
+    return rpcAction("recheck").then(function(r){
       paintHealth({ok:!!r.ok, starting:!!r.starting, message:r.message || (r.ok ? "服务在线" : "离线")});
     }).catch(function(e){
       paintHealth({ok:false, starting:false, message:"检测失败：" + (e.message || e)});
     }).finally(function(){ btn.disabled = false; });
+  }
+  $("#btnRecheck").addEventListener("click", function(){
+    return recheckService().then(function(){
+      if(!studioInitialized) return init();
+    });
   });
 
   $("#btnRefreshSys").addEventListener("click", function(){ loadSystem(true); });
@@ -2299,15 +2515,15 @@
     });
   });
   $("#btnWipeCache").addEventListener("click", function(){
-    armButton(this, "确认清空全部", "清空全部", function(btn){
+    armButton(this, "确认清空缓存", "清空缓存", function(btn){
       btn.disabled = true; btn.textContent = "清空中…";
       rpcAction("cacheClean", {force:true}).then(function(r){
-        if(r && r.ok){ toast("已清空全部缓存，释放 " + r.freed_mb + " MB"); return rpcQuery("cacheStats"); }
+        if(r && r.ok){ toast("已清空缓存，释放 " + r.freed_mb + " MB"); return rpcQuery("cacheStats"); }
         toast("清空失败：" + ((r && r.error) || ""), true);
         return null;
       }).then(function(cs){ if(cs) paintCacheStats(cs); loadRecentJobs(); })
         .catch(function(e){ toast("清空失败：" + (e.message || e), true); })
-        .finally(function(){ btn.disabled = false; btn.textContent = "清空全部"; });
+        .finally(function(){ btn.disabled = false; btn.textContent = "清空缓存"; });
     });
   });
 
@@ -2381,6 +2597,55 @@
       btn.disabled = false;
     });
   });
+  async function deleteSelectedModel(){
+    const button = $("#btnDeleteModel"), select = $("#routeModel");
+    const selected = S.models.filter(m => m.id === select.value);
+    if(selected.length !== 1){ toast("无法唯一确定当前音色，请刷新或重新选择", true); return; }
+    const model = selected[0];
+    if(model.id === "default"){ toast("不可删除：配置的默认音色", true); return; }
+    button.disabled = true;
+    let submitted = false, deleted = false;
+    try{
+      const data = await rpcQuery("modelUploads");
+      if(!data || !Array.isArray(data.models)) throw new Error(data && data.error || "读取模型管理清单失败");
+      const rows = data.models.filter(m => m.model === model.model && m.name === model.label);
+      if(rows.length !== 1) throw new Error("无法唯一匹配当前权重，请刷新模型列表");
+      const row = rows[0];
+      if(row.protected) throw new Error("不可删除：" + row.protected);
+      if(typeof row.protected !== "string" || !row.id || !row.confirm || !Array.isArray(row.files) || !row.files.includes(row.model)) throw new Error("删除清单不完整");
+      if(select.value !== model.id) throw new Error("所选模型已改变，请重新确认");
+      const dialog = $("#deleteModelDialog");
+      const lines = [row.name, "永久删除以下文件：", ...row.files];
+      if(row.retained_index) lines.push("保留索引：" + row.retained_index);
+      lines.push("此操作无法撤销。引用这些文件的路由或预设需要重新选择音色并保存。");
+      $("#deleteModelPlan").textContent = lines.join("\n");
+      dialog.returnValue = "cancel";
+      dialog.showModal();
+      await new Promise(resolve => dialog.addEventListener("close", resolve, {once:true}));
+      if(dialog.returnValue !== "delete") return;
+      if(select.value !== model.id) throw new Error("所选模型已改变，请重新确认");
+      submitted = true;
+      const result = await rpcAction("modelDelete", {model_id:row.id, confirm:row.confirm});
+      if(!result || result.ok !== true) throw new Error(result && result.error || "无法确认删除结果");
+      deleted = true;
+      S.models = S.models.filter(m => m.model !== model.model);
+      for(const voice of [S.live, S.draft]){
+        if(voice.model === model.model){ voice.model = ""; voice.index = ""; }
+      }
+      paintRoute(); paintPlay();
+    }catch(e){ toast(e.message || String(e), true); }
+    finally{
+      try{
+        if(submitted){
+          const refreshed = await loadModels();
+          if(deleted) toast("已删除「" + model.label + "」" + (refreshed && !refreshed.error && Array.isArray(refreshed.models) ? "" : "，模型列表刷新失败"));
+        }
+      }catch(e){ toast((deleted ? "已删除，" : "") + "模型列表刷新失败", true); }
+      button.disabled = false;
+    }
+  }
+  $("#btnDeleteModel").addEventListener("click", deleteSelectedModel);
+
   // Import external RVC WebUI / Applio model
   if($("#btnOpenImportModel")){
     $("#btnOpenImportModel").addEventListener("click", function(){
@@ -2515,15 +2780,7 @@
     });
   });
 
-  $("#btnOpenSave").addEventListener("click", function(){
-    var savedDir = "";
-    try{ savedDir = localStorage.getItem("jingge_last_save_dir") || ""; }catch(e){}
-    $("#savePathInput").value = savedDir;
-    openModal("saveModal");
-    setTimeout(function(){ $("#savePathInput").focus(); }, 30);
-  });
-  $("#btnSaveLocalOk").addEventListener("click", doSaveLocal);
-  $("#savePathInput").addEventListener("keydown", function(e){ if(e.key === "Enter") doSaveLocal(); });
+  $("#btnOpenSave").addEventListener("click", doSaveLocal);
   $("#btnOpenSend").addEventListener("click", openSendModal);
   $("#sessFilter").addEventListener("input", function(){ paintSessions(this.value); });
 
