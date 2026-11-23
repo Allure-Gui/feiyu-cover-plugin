@@ -4,7 +4,7 @@
   <br>
   <img src="assets/icon.png" width="76" alt="麦弦图标">
   <h1>麦弦 (MaiChord) · MaiBot AI 翻唱插件</h1>
-  <p>让麦麦不止陪你聊天，还能用你的音色开唱：群聊点歌、58 秒副歌、清唱猜歌，练出专属音色。</p>
+  <p>让麦麦不止陪你聊天，还能用自己的声音为你唱歌：群聊点歌、58 秒副歌、清唱猜歌，练出专属音色。</p>
 
   <p>
     <img src="https://img.shields.io/badge/Version-v0.2.1-3B7DD8?style=for-the-badge&labelColor=24344D" alt="Version v0.2.1">
