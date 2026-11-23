@@ -28,6 +28,25 @@
   <img src="assets/wave-divider.svg" width="100%" alt="divider">
 </p>
 
+## 界面预览
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <a href="assets/shot-play.png"><img src="assets/shot-play.png" width="100%" alt="试听工坊界面"></a>
+      <br>
+      <sub><b>试听工坊</b>：搜歌、上传音源、60 秒极速试听与整曲导出</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="assets/shot-vocal.png"><img src="assets/shot-vocal.png" width="100%" alt="干声工坊界面"></a>
+      <br>
+      <sub><b>干声工坊</b>：提取纯净人声、声纹体检与一键训练专属音色</sub>
+    </td>
+  </tr>
+</table>
+
+<p align="center"><sub>点击图片可查看大图</sub></p>
+
 <div align="center">
   <img src="assets/story-flow.svg" width="880" alt="麦弦工作流程">
 </div>
