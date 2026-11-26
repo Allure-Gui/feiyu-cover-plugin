@@ -257,6 +257,10 @@
             "platform": {
               "type": "string",
               "max_length": 40
+            },
+            "deliver_mode": {
+              "type": "string",
+              "max_length": 40
             }
           }
         },

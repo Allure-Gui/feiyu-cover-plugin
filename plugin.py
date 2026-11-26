@@ -146,10 +146,28 @@ class CoverSection(PluginConfigBase):
         description="命中缓存的成品额外延迟几秒发，让开唱到出成品的时序自然",
         json_schema_extra={"label": "缓存成品延迟（秒）"},
     )
-    deliver_mode: Literal["副歌高潮直出（58秒·推荐）", "从头分段发送（前2段×60秒）"] = Field(
+    deliver_mode: Literal[
+        "副歌高潮直出（58秒·推荐）",
+        "从头分段发送（前2段×60秒）",
+        "整首完整分段发送（每段60秒·连续发完）",
+        "直接发送完整 MP3 音频文件",
+    ] = Field(
         default="副歌高潮直出（58秒·推荐）",
-        description="副歌高潮直出：张嘴即高潮且不刷屏；从头分段发送：从头连续发前 2 段语音条",
+        description=(
+            "副歌高潮直出：张嘴即高潮且不刷屏；从头分段发送：连续发前 2 段语音条；"
+            "整首完整分段发送：按 60 秒连续发完整首歌曲；完整 MP3 文件：单条音频文件直发（不支持文件的平台自动回退整首语音）"
+        ),
         json_schema_extra={"label": "群聊发歌模式"},
+    )
+    max_voice_parts: int = Field(
+        default=8, ge=2, le=15,
+        description="仅「整首完整分段发送」生效：单首歌最多连续发送的 60 秒语音段数上限（默认 8 段 ≈ 8 分钟，防超长串烧刷屏）",
+        json_schema_extra={"label": "整首语音最大段数"},
+    )
+    voice_part_interval: float = Field(
+        default=1.8, ge=0.5, le=10.0,
+        description="多段语音条连续发送时的段间停顿秒数（默认 1.8 秒，降低顺序错乱与平台限频风险）",
+        json_schema_extra={"label": "分段发送间隔（秒）"},
     )
     send_song_card: bool = Field(
         default=True,
@@ -173,6 +191,11 @@ class CoverSection(PluginConfigBase):
         mapping = {
             "highlight": "副歌高潮直出（58秒·推荐）",
             "two_parts": "从头分段发送（前2段×60秒）",
+            "full_voice": "整首完整分段发送（每段60秒·连续发完）",
+            "full": "整首完整分段发送（每段60秒·连续发完）",
+            "all_parts": "整首完整分段发送（每段60秒·连续发完）",
+            "full_file": "直接发送完整 MP3 音频文件",
+            "file": "直接发送完整 MP3 音频文件",
         }
         return mapping.get(str(v or "").strip().lower(), v)
 
@@ -1782,10 +1805,10 @@ class FeiyuCoverPlugin(MaiBotPlugin):
     async def jingge_job(self, job_id: str) -> dict[str, Any]:
         return await self._get_job(job_id)
 
-    @API("jingge_send", description="把成品发送到指定会话")
+    @API("jingge_send", description="把成品发送到指定会话（支持按次指定发歌模式）")
     async def jingge_send(self, job_id: str, stream_id: str,
                           group_id: str = "", user_id: str = "",
-                          platform: str = "") -> dict[str, Any]:
+                          platform: str = "", deliver_mode: str = "") -> dict[str, Any]:
         try:
             resp = await self._client().get(f"/jobs/{job_id}", timeout=6.0)
             resp.raise_for_status()
@@ -1799,6 +1822,7 @@ class FeiyuCoverPlugin(MaiBotPlugin):
             "user_id": user_id,
             "platform": (platform or "").strip(),
             "song": data.get("song", ""),
+            "deliver_mode": (deliver_mode or "").strip(),
         }))
         return {"ok": True, "message": "正在发送到目标会话"}
 
@@ -3289,22 +3313,45 @@ body{{background:transparent;font-family:"PingFang SC","Microsoft YaHei","Hiragi
                 await pet.play_event(event)
 
     @staticmethod
+    def _normalize_deliver_mode(raw: Any) -> str:
+        """统一归一化发歌模式为 highlight / two_parts / full_voice / full_file。"""
+        val = str(raw or "").strip()
+        low = val.lower()
+        if low in ("full_file", "file") or "mp3" in low or "文件" in val:
+            return "full_file"
+        if low in ("full_voice", "full", "all_parts") or val.startswith("整首") or "完整分段" in val:
+            return "full_voice"
+        if low == "two_parts" or val.startswith("从头") or "前2段" in val:
+            return "two_parts"
+        return "highlight"
+
+    @staticmethod
     def _build_song_card_html(
         *,
         title: str,
         artist: str,
         pitch: int,
         requester: str,
-        highlight: bool,
-        duration_sec: float,
+        highlight: bool = True,
+        duration_sec: float = 0.0,
         bot_name: str = "麦弦",
+        deliver_mode: str = "",
+        expected_parts: int = 0,
     ) -> str:
         t_esc = html_lib.escape((title or "翻唱单曲")[:22])
         a_esc = html_lib.escape((artist or "翻唱原曲")[:20])
         r_esc = html_lib.escape((requester or "群友点播")[:14])
         b_esc = html_lib.escape((bot_name or "麦弦")[:10])
         pitch_txt = f"智能变调 {pitch:+d}" if pitch != 0 else "原调演绎"
-        mode_txt = "副歌高潮直出" if highlight else "分段演唱"
+        mode_key = deliver_mode or ("highlight" if highlight else "two_parts")
+        if mode_key == "full_file":
+            mode_txt = "320k 完整音频"
+        elif mode_key == "full_voice":
+            mode_txt = f"整首分段 · 共{expected_parts}段" if expected_parts >= 2 else "整首完整演唱"
+        elif mode_key == "two_parts":
+            mode_txt = "分段演唱 · 前2段"
+        else:
+            mode_txt = "副歌高潮直出"
         dur_m = int(duration_sec // 60)
         dur_s = int(duration_sec % 60)
         dur_txt = f"{dur_m}:{dur_s:02d}" if duration_sec > 0 else "Hi-Fi"
@@ -3425,7 +3472,8 @@ body{{background:transparent;font-family:"PingFang SC","Microsoft YaHei","Hiragi
 </body></html>"""
 
     async def _send_song_card(self, meta: dict[str, Any], title: str, stream_id: str,
-                              requester: str, highlight: bool) -> bool:
+                              requester: str, highlight: bool = True,
+                              *, deliver_mode: str = "", expected_parts: int = 0) -> bool:
         """渲染精致紧凑的黑胶单曲卡并发送到群聊；宿主不支持或关闭时静默跳过。"""
         if not stream_id or not self.config.cover.send_song_card:
             return False
@@ -3442,6 +3490,8 @@ body{{background:transparent;font-family:"PingFang SC","Microsoft YaHei","Hiragi
                 highlight=highlight,
                 duration_sec=float(meta.get("duration") or 0.0),
                 bot_name=bot_name,
+                deliver_mode=deliver_mode,
+                expected_parts=expected_parts,
             )
             res = await render.html2png(
                 html_str,
@@ -3498,11 +3548,23 @@ body{{background:transparent;font-family:"PingFang SC","Microsoft YaHei","Hiragi
         platform = str(record.get("platform") or "").strip().lower()
         if not platform and stream_id:
             platform = await self._resolve_platform(stream_id, record)
-        deliver_raw = str(self.config.cover.deliver_mode or "")
-        use_highlight = not (deliver_raw == "two_parts" or deliver_raw.startswith("从头"))
+        deliver_override = str(record.get("deliver_mode") or "").strip()
+        mode_key = self._normalize_deliver_mode(deliver_override or self.config.cover.deliver_mode)
+        max_full_parts = max(2, min(15, int(getattr(self.config.cover, "max_voice_parts", 8) or 8)))
+        part_interval = max(0.5, min(10.0, float(getattr(self.config.cover, "voice_part_interval", 1.8) or 1.8)))
+        dur_sec = float(meta.get("duration") or 0.0)
+        est_parts = min(max_full_parts, max(1, int((dur_sec + 59.99) // 60))) if (mode_key == "full_voice" and dur_sec > 0) else 0
+
+        # Telegram 暂不支持 file 段但支持语音条：选择「完整 MP3 文件」时自动优雅切换为「整首完整分段语音」
+        effective_mode = "full_voice" if (mode_key == "full_file" and platform == "telegram") else mode_key
 
         # 1. 可选：先发一张黑胶单曲卡（支持所有允许发图的平台；渲染不可用时静默跳过，绝不阻断发歌）
-        await self._send_song_card(meta, title, stream_id, requester, highlight=use_highlight)
+        await self._send_song_card(
+            meta, title, stream_id, requester,
+            highlight=(effective_mode == "highlight"),
+            deliver_mode=effective_mode,
+            expected_parts=est_parts,
+        )
 
         # 2. 微信 ClawBot 明确不支持 voice / file 出站，直接给出清晰指引并释放 Planner 记忆
         if platform == "weixin_clawbot":
@@ -3518,26 +3580,68 @@ body{{background:transparent;font-family:"PingFang SC","Microsoft YaHei","Hiragi
                 )
             return
 
-        # 3. 兜底链：副歌高潮直出（或分段语音条）→ 完整文件 → 文本提示
-        sent = 0
-        if use_highlight:
-            sent = await self._send_highlight(job_id, title, stream_id, seconds=58, platform=platform)
-        if sent <= 0:
-            sent = await self._send_voice_parts(job_id, title, stream_id, platform=platform)
-        if sent > 0:
-            self._spawn(self._pet_notify(f"《{title}》唱好啦，快去听听看！✨", event="happy"))
-            await self._append_planner_note(
-                stream_id,
-                f"[麦弦翻唱已完成并发送] 《{title}》已经唱完并以语音条发到会话中，当前翻唱队列已空闲，可随时继续点歌或重唱。",
+        # 3. 四档发歌模式与智能兜底链：
+        #    - full_file  : 直接发完整 MP3 文件 → 失败回退整首分段语音 → 文本提示
+        #    - full_voice : 按 60 秒连续发完整首（受 max_voice_parts 护栏保护）→ 失败降级完整文件 → 文本提示
+        #    - two_parts  : 从头连发前 2 段×60 秒 → 失败降级完整文件 → 文本提示
+        #    - highlight  : 58 秒副歌高潮直出 → 失败回退前 2 段 → 完整文件 → 文本提示
+        if effective_mode == "full_file":
+            if await self._send_file(job_id, title, stream_id, platform=platform):
+                self._spawn(self._pet_notify(f"《{title}》完整音频发好啦，快去听听看！✨", event="happy"))
+                await self._append_planner_note(
+                    stream_id,
+                    f"[麦弦翻唱已完成并发送] 《{title}》已经唱完并以完整 MP3 音频文件发到会话中，当前翻唱队列已空闲，可随时继续点歌。",
+                )
+                return
+            self.ctx.logger.warning("完整文件发送失败 (platform=%s)，回退为整首分段语音：%s", platform or "unknown", job_id)
+            sent = await self._send_voice_parts(
+                job_id, title, stream_id, platform=platform,
+                max_parts=max_full_parts, interval=part_interval,
             )
-            return
-        self.ctx.logger.warning("语音条发送失败 (platform=%s)，尝试降级为完整文件：%s", platform or "unknown", job_id)
-        if await self._send_file(job_id, title, stream_id, platform=platform):
-            await self._append_planner_note(
-                stream_id,
-                f"[麦弦翻唱已完成并发送] 《{title}》已以音频文件形式发送，当前翻唱队列已空闲，可随时继续点歌。",
-            )
-            return
+            if sent > 0:
+                self._spawn(self._pet_notify(f"《{title}》唱好啦，快去听听看！✨", event="happy"))
+                await self._append_planner_note(
+                    stream_id,
+                    f"[麦弦翻唱已完成并发送] 《{title}》已经唱完并以整首分段语音（共 {sent} 段）发到会话中，当前翻唱队列已空闲，可随时继续点歌或重唱。",
+                )
+                return
+        else:
+            sent = 0
+            if effective_mode == "highlight":
+                sent = await self._send_highlight(job_id, title, stream_id, seconds=58, platform=platform)
+                if sent <= 0:
+                    sent = await self._send_voice_parts(
+                        job_id, title, stream_id, platform=platform,
+                        max_parts=2, interval=part_interval,
+                    )
+            elif effective_mode == "full_voice":
+                sent = await self._send_voice_parts(
+                    job_id, title, stream_id, platform=platform,
+                    max_parts=max_full_parts, interval=part_interval,
+                )
+            else:
+                sent = await self._send_voice_parts(
+                    job_id, title, stream_id, platform=platform,
+                    max_parts=2, interval=part_interval,
+                )
+
+            if sent > 0:
+                self._spawn(self._pet_notify(f"《{title}》唱好啦，快去听听看！✨", event="happy"))
+                mode_note = f"整首分段语音（共 {sent} 段）" if effective_mode == "full_voice" else (
+                    f"分段语音（共 {sent} 段）" if sent > 1 else "语音条"
+                )
+                await self._append_planner_note(
+                    stream_id,
+                    f"[麦弦翻唱已完成并发送] 《{title}》已经唱完并以{mode_note}发到会话中，当前翻唱队列已空闲，可随时继续点歌或重唱。",
+                )
+                return
+            self.ctx.logger.warning("语音条发送失败 (platform=%s)，尝试降级为完整文件：%s", platform or "unknown", job_id)
+            if await self._send_file(job_id, title, stream_id, platform=platform):
+                await self._append_planner_note(
+                    stream_id,
+                    f"[麦弦翻唱已完成并发送] 《{title}》已以音频文件形式发送，当前翻唱队列已空闲，可随时继续点歌。",
+                )
+                return
         if stream_id:
             plat_note = f"（当前平台 {platform} 可能不支持语音/音频文件出站）" if platform else ""
             with contextlib.suppress(Exception):
@@ -3550,19 +3654,30 @@ body{{background:transparent;font-family:"PingFang SC","Microsoft YaHei","Hiragi
                 f"[麦弦翻唱已结束] 《{title}》已生成但未能发送到当前会话，当前翻唱队列已空闲。",
             )
 
-    async def _send_voice_parts(self, job_id: str, title: str, stream_id: str, *, platform: str = "") -> int:
-        """把歌曲开头按 60 秒切段发送（默认最多前 2 段，兼顾听感与不刷屏）。"""
+    async def _send_voice_parts(
+        self,
+        job_id: str,
+        title: str,
+        stream_id: str,
+        *,
+        platform: str = "",
+        max_parts: int = 2,
+        interval: float = 1.8,
+    ) -> int:
+        """按 60 秒切段连续发送语音条（支持前 2 段或整首完整模式，带防限频间隔与单段瞬时重试）。"""
         if not stream_id:
             return 0
         seconds = 60
-        max_parts = 2
+        limit = max(1, min(15, int(max_parts or 2)))
+        gap = max(0.5, min(10.0, float(interval or 1.8)))
         for_qq = 1 if self._should_use_qq_master(platform) else 0
         try:
             info = await self._client().get(
                 f"/jobs/{job_id}/voice-info", params={"seconds": seconds}, timeout=30.0,
             )
             info.raise_for_status()
-            parts = min(int(info.json().get("parts", 1)), max_parts)
+            total_parts = max(1, int(info.json().get("parts", 1) or 1))
+            parts = min(total_parts, limit)
         except Exception as exc:  # noqa: BLE001
             self.ctx.logger.warning("获取语音分段信息失败：%s", exc)
             return 0
@@ -3575,7 +3690,7 @@ body{{background:transparent;font-family:"PingFang SC","Microsoft YaHei","Hiragi
                     params={"seconds": seconds, "for_qq": for_qq}, timeout=120.0,
                 )
                 if resp.status_code != 200:
-                    self.ctx.logger.warning("第 %d 段不可用：HTTP %s", i + 1, resp.status_code)
+                    self.ctx.logger.warning("第 %d/%d 段不可用：HTTP %s", i + 1, parts, resp.status_code)
                     break
                 audio = resp.content
                 segment = {
@@ -3584,21 +3699,32 @@ body{{background:transparent;font-family:"PingFang SC","Microsoft YaHei","Hiragi
                     "hash": hashlib.sha256(audio).hexdigest(),
                     "binary_data_base64": base64.b64encode(audio).decode("ascii"),
                 }
-                sent = await self.ctx.send.hybrid(
-                    [segment], stream_id, processed_plain_text=title,
-                )
-                if not self._send_ok(sent):
-                    self.ctx.logger.warning("第 %d 段发送未成功：%s", i + 1, sent)
+                sent_ok = False
+                for attempt in range(2):
+                    sent = await self.ctx.send.hybrid(
+                        [segment], stream_id, processed_plain_text=title,
+                    )
+                    if self._send_ok(sent):
+                        sent_ok = True
+                        break
+                    if attempt == 0:
+                        self.ctx.logger.warning("第 %d/%d 段首次发送未成功，1.5 秒后重试：%s", i + 1, parts, sent)
+                        await asyncio.sleep(1.5)
+                if not sent_ok:
+                    self.ctx.logger.warning("第 %d/%d 段重试仍未成功，中止后续分段", i + 1, parts)
                     break
                 ok_count += 1
                 if i < parts - 1:
-                    await asyncio.sleep(1.0)   # 稍作间隔，避免触发平台限频
+                    await asyncio.sleep(gap)   # 段间留出安全间隔，避免触发平台限频与语音条乱序
             except Exception as exc:  # noqa: BLE001
-                self.ctx.logger.error("第 %d 段失败：%s", i + 1, exc)
+                self.ctx.logger.error("第 %d/%d 段失败：%s", i + 1, parts, exc)
                 break
 
         if ok_count:
-            self.ctx.logger.info("语音条发送完成：%d/%d 段 (platform=%s)", ok_count, parts, platform or "unknown")
+            self.ctx.logger.info(
+                "语音条发送完成：%d/%d 段（全曲共 %d 段，上限 %d，platform=%s）",
+                ok_count, parts, total_parts, limit, platform or "unknown",
+            )
         return ok_count
 
     async def _send_file(self, job_id: str, title: str, stream_id: str, *, platform: str = "") -> bool:

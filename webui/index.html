@@ -1047,7 +1047,17 @@
 <div class="modal-bg" id="sendModal">
   <div class="modal">
     <h3>推送翻唱到会话</h3>
-    <p class="mdesc">选择目标群聊或私聊，插件将以语音条分段发出。</p>
+    <p class="mdesc">选择本次发送方式与目标群聊/私聊，插件将在后台自动送达。</p>
+    <div class="field" style="margin-bottom:8px">
+      <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">发送方式</label>
+      <select id="sendDeliverMode" style="width:100%">
+        <option value="">跟随插件设置（默认）</option>
+        <option value="highlight">副歌高潮直出（58秒）</option>
+        <option value="two_parts">从头分段发送（前2段×60秒）</option>
+        <option value="full_voice">整首完整分段发送（每段60秒·连续发完）</option>
+        <option value="full_file">直接发送完整 MP3 音频文件</option>
+      </select>
+    </div>
     <input type="text" id="sessFilter" placeholder="搜索群名或昵称…">
     <div class="sess-list" id="sessList"><div class="empty">加载会话中…</div></div>
     <div class="modal-foot">
@@ -2206,12 +2216,15 @@
         if(!S.currentPlayJobId) return;
         closeModal("sendModal");
         toast("正在推送到「" + s.name + "」…");
+        var modeSel = $("#sendDeliverMode");
+        var chosenMode = modeSel ? (modeSel.value || "") : "";
         rpcAction("send", {
           job_id: S.currentPlayJobId,
           stream_id: s.stream_id,
           group_id: s.group_id || "",
           user_id: s.user_id || "",
-          platform: s.platform || ""
+          platform: s.platform || "",
+          deliver_mode: chosenMode
         }).then(function(){
           toast("已推送到「" + s.name + "」");
         }).catch(function(e){
